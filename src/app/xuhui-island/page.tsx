@@ -28,6 +28,11 @@ interface ShopMetric {
   motionTick: number;
 }
 
+interface BoardSize {
+  width: number;
+  height: number;
+}
+
 const LOBSTER_VARIANTS = [
   '/crayfish/base.png',
   '/crayfish/glasses.png',
@@ -48,6 +53,7 @@ const CONSTRUCTION_SITES = [
   { id: 'construction-2', x: 61.5, y: 83.5, offsetX: -8, offsetY: -6 },
   { id: 'construction-3', x: 86, y: 79, offsetX: -26, offsetY: -8 },
 ];
+const DEFAULT_BOARD_SIZE: BoardSize = { width: 1420, height: 923 };
 const TRAVEL_DURATION_MS = 3900;
 const REST_DURATION_MS = 3400;
 
@@ -73,10 +79,24 @@ const createShopMetrics = () =>
     ])
   ) as Record<string, ShopMetric>;
 
-const toMarkerPoint = (shop: XuhuiShop) => ({
-  x: Math.max(8, Math.min(92, shop.lobsterX + (Math.random() * 3 - 1.5))),
-  y: Math.max(10, Math.min(95, shop.lobsterY + (Math.random() * 3 - 1.5))),
-});
+const toShopAnchorPoint = (shop: XuhuiShop, boardSize: BoardSize = DEFAULT_BOARD_SIZE) => {
+  const width = boardSize.width || DEFAULT_BOARD_SIZE.width;
+  const height = boardSize.height || DEFAULT_BOARD_SIZE.height;
+
+  return {
+    x: clamp(shop.x + ((shop.mapOffsetX ?? 0) / width) * 100, 8, 92),
+    y: clamp(shop.y + (((shop.mapOffsetY ?? 0) + 34) / height) * 100, 10, 95),
+  };
+};
+
+const toMarkerPoint = (shop: XuhuiShop, boardSize: BoardSize = DEFAULT_BOARD_SIZE) => {
+  const anchor = toShopAnchorPoint(shop, boardSize);
+
+  return {
+    x: clamp(anchor.x + (Math.random() * 1.6 - 0.8), 8, 92),
+    y: clamp(anchor.y + (Math.random() * 1.8 - 0.9), 10, 95),
+  };
+};
 
 const findShopById = (shopId: string) => XUHUI_SHOPS.find((shop) => shop.id === shopId);
 const findSpotById = (spotId: string) => LOBSTER_WAIT_SPOTS.find((spot) => spot.id === spotId);
@@ -103,7 +123,7 @@ const createInitialLobsters = (): LobsterWalker[] =>
   Array.from({ length: 7 }, (_, index) => {
     const now = Date.now();
     const shop = XUHUI_SHOPS[index % XUHUI_SHOPS.length];
-    const point = toMarkerPoint(shop);
+    const point = toMarkerPoint(shop, DEFAULT_BOARD_SIZE);
 
     return {
       id: `lobster-${index}`,
@@ -124,8 +144,10 @@ const createInitialLobsters = (): LobsterWalker[] =>
 const pageStyle: CSSProperties = {
   minHeight: '100vh',
   padding: '16px 10px 30px',
-  background: 'radial-gradient(circle at top, #fef4d7 0%, #ffd696 34%, #ef8454 100%)',
-  color: '#4a3124',
+  background: 'linear-gradient(180deg, #0a2a3a 0%, #0d3d52 20%, #0f5068 45%, #0d6878 65%, #0b7a7a 80%, #0a8a72 100%)',
+  color: '#e0f4f0',
+  position: 'relative',
+  overflow: 'hidden',
 };
 
 const heroStyle: CSSProperties = {
@@ -133,9 +155,11 @@ const heroStyle: CSSProperties = {
   margin: '0 auto 18px',
   padding: 24,
   borderRadius: 28,
-  background: 'rgba(255, 248, 236, 0.86)',
-  border: '1px solid rgba(255,255,255,0.72)',
-  boxShadow: '0 24px 80px rgba(100,56,26,0.14)',
+  background: 'rgba(8, 30, 45, 0.72)',
+  border: '1px solid rgba(100, 220, 200, 0.22)',
+  boxShadow: '0 24px 80px rgba(0,30,60,0.35)',
+  backdropFilter: 'blur(16px)',
+  WebkitBackdropFilter: 'blur(16px)',
 };
 
 const statsRowStyle: CSSProperties = {
@@ -143,6 +167,8 @@ const statsRowStyle: CSSProperties = {
   gap: 12,
   flexWrap: 'wrap',
   marginTop: 18,
+  position: 'relative',
+  zIndex: 2,
 };
 
 const statCardStyle: CSSProperties = {
@@ -150,19 +176,23 @@ const statCardStyle: CSSProperties = {
   minWidth: 180,
   padding: '14px 16px',
   borderRadius: 20,
-  background: '#fff3de',
-  boxShadow: '0 10px 24px rgba(136,83,33,0.08)',
+  background: 'rgba(8, 40, 55, 0.68)',
+  border: '1px solid rgba(100,220,200,0.18)',
+  boxShadow: '0 10px 24px rgba(0,20,40,0.3)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
   textAlign: 'center',
+  color: '#c0eee8',
 };
 
 const mapShellStyle: CSSProperties = {
   maxWidth: 1420,
   margin: '0 auto',
-  padding: 12,
+  padding: 10,
   borderRadius: 30,
-  background: 'rgba(255,255,255,0.26)',
-  border: '1px solid rgba(255,255,255,0.48)',
-  boxShadow: '0 28px 100px rgba(88,50,23,0.16)',
+  background: 'rgba(5, 25, 40, 0.55)',
+  border: '2px solid rgba(80, 200, 180, 0.28)',
+  boxShadow: '0 28px 100px rgba(0,20,50,0.5), 0 0 60px rgba(30,160,140,0.12)',
 };
 
 const mapBoardStyle: CSSProperties = {
@@ -200,12 +230,12 @@ const metricGlassStyle: CSSProperties = {
   minWidth: 164,
   padding: '10px 14px',
   borderRadius: 20,
-  background: 'rgba(241, 197, 170, 0.78)',
-  border: '1px solid rgba(255,255,255,0.35)',
+  background: 'rgba(6, 28, 44, 0.88)',
+  border: '1px solid rgba(100,220,200,0.28)',
   backdropFilter: 'blur(16px)',
   WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 34px rgba(72, 38, 22, 0.2)',
-  color: '#241610',
+  boxShadow: '0 20px 34px rgba(0,20,50,0.4), 0 0 20px rgba(50,180,160,0.12)',
+  color: '#d0f0ea',
 };
 
 const renderStars = (rating: number) => '⭐️'.repeat(Math.max(4, Math.round(rating)));
@@ -216,9 +246,11 @@ export default function XuhuiIslandPage() {
   const router = useRouter();
   const [shopMetrics, setShopMetrics] = useState<Record<string, ShopMetric>>(createShopMetrics);
   const [lobsters, setLobsters] = useState<LobsterWalker[]>(createInitialLobsters);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [hoveredShopId, setHoveredShopId] = useState<string | null>(null);
   const [selectedLobsterId, setSelectedLobsterId] = useState<string | null>(null);
+  const [boardSize, setBoardSize] = useState<BoardSize>(DEFAULT_BOARD_SIZE);
+  const mapBoardRef = useRef<HTMLDivElement>(null);
   const backgroundVideoRef = useRef<HTMLVideoElement>(null);
   const crowdAudioRef = useRef<HTMLAudioElement>(null);
 
@@ -234,7 +266,30 @@ export default function XuhuiIslandPage() {
   }, []);
 
   useEffect(() => {
-    setSoundEnabled(window.sessionStorage.getItem('xuhui-ambient-enabled') === '1');
+    const element = mapBoardRef.current;
+    if (!element) return;
+
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      setBoardSize({
+        width: rect.width || DEFAULT_BOARD_SIZE.width,
+        height: rect.height || DEFAULT_BOARD_SIZE.height,
+      });
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(() => updateSize());
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const storedState = window.sessionStorage.getItem('xuhui-ambient-enabled');
+    const shouldEnable = storedState !== '0';
+    if (!storedState) window.sessionStorage.setItem('xuhui-ambient-enabled', '1');
+    setSoundEnabled(shouldEnable);
   }, []);
 
   useEffect(() => {
@@ -242,13 +297,21 @@ export default function XuhuiIslandPage() {
     const crowdAudio = crowdAudioRef.current;
 
     window.sessionStorage.setItem('xuhui-ambient-enabled', soundEnabled ? '1' : '0');
-    if (!soundEnabled) {
-      if (backgroundVideo) {
-        backgroundVideo.muted = true;
-        backgroundVideo.volume = 0;
-        void backgroundVideo.play().catch(() => undefined);
-      }
-      if (crowdAudio) {
+    if (backgroundVideo) {
+      backgroundVideo.muted = !soundEnabled;
+      backgroundVideo.volume = soundEnabled ? 1 : 0;
+      void backgroundVideo.play().catch((error) => {
+        if (soundEnabled) console.error('Ambient video audio play failed:', error);
+      });
+    }
+    if (crowdAudio) {
+      if (soundEnabled) {
+        crowdAudio.muted = false;
+        crowdAudio.volume = 0.18;
+        void crowdAudio.play().catch((error) => {
+          console.error('Crowd audio play failed:', error);
+        });
+      } else {
         crowdAudio.pause();
         crowdAudio.currentTime = 0;
       }
@@ -298,7 +361,10 @@ export default function XuhuiIslandPage() {
             lobster.mode === 'resting' && Math.random() < 0.25
               ? ({ kind: 'spot', id: LOBSTER_WAIT_SPOTS[Math.floor(Math.random() * LOBSTER_WAIT_SPOTS.length)]!.id } as const)
               : getRandomShopDestination(leavingShopId);
-          const nextPoint = toDestinationPoint(nextDestination);
+          const nextPoint =
+            nextDestination.kind === 'shop'
+              ? toMarkerPoint(findShopById(nextDestination.id) ?? XUHUI_SHOPS[0], boardSize)
+              : toDestinationPoint(nextDestination);
 
           return {
             ...lobster,
@@ -333,7 +399,7 @@ export default function XuhuiIslandPage() {
     }, 600);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [boardSize]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -418,7 +484,10 @@ export default function XuhuiIslandPage() {
     lobsterId: string,
     destination: { kind: 'shop'; id: string } | { kind: 'spot'; id: string }
   ) => {
-    const point = toDestinationPoint(destination);
+    const point =
+      destination.kind === 'shop'
+        ? toMarkerPoint(findShopById(destination.id) ?? XUHUI_SHOPS[0], boardSize)
+        : toDestinationPoint(destination);
     const now = Date.now();
 
     setLobsters((currentLobsters) =>
@@ -466,7 +535,29 @@ export default function XuhuiIslandPage() {
         <source src="https://www.soundjay.com/human/sounds/people-talking-1.mp3" type="audio/mp3" />
       </audio>
 
-      <section style={heroStyle}>
+      {/* === 海洋水面动态背景层 === */}
+      <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+        <div className="ocean-wave-deep" style={{
+          position: 'absolute', inset: 0,
+          background: 'repeating-linear-gradient(90deg, transparent 0px, rgba(255,255,255,0.016) 1px, transparent 2px, transparent 60px)',
+          backgroundSize: '120px 100%',
+        }} />
+        <div className="ocean-wave-mid" style={{
+          position: 'absolute', inset: 0,
+          background: 'repeating-linear-gradient(92deg, transparent 0px, rgba(80,200,180,0.022) 2px, transparent 4px, transparent 80px)',
+          backgroundSize: '200px 100%',
+        }} />
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'radial-gradient(ellipse at 15% 25%, rgba(100,220,200,0.07) 0%, transparent 45%), radial-gradient(ellipse at 80% 65%, rgba(60,180,200,0.055) 0%, transparent 45%)',
+        }} />
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
+          background: 'linear-gradient(180deg, transparent 0%, rgba(5,40,50,0.2) 100%)',
+        }} />
+      </div>
+
+      <section style={{ ...heroStyle, position: 'relative', zIndex: 2 }}>
         <div
           style={{
             display: 'flex',
@@ -476,25 +567,26 @@ export default function XuhuiIslandPage() {
             flexWrap: 'wrap',
           }}
         >
-          <div style={badgeStyle}>JINYANG ISLAND</div>
+          <div style={{ ...badgeStyle, background: 'rgba(15,80,68,0.55)', color: '#7eeee0', border: '1px solid rgba(100,220,200,0.3)', letterSpacing: '0.12em' }}>🏝️ JINYANG ISLAND · 美食岛</div>
           <button
             type="button"
             onClick={toggleAmbientSound}
             style={{
-              ...darkGlassStyle,
               display: 'inline-flex',
               alignItems: 'center',
               gap: 8,
               padding: '8px 14px',
               borderRadius: 999,
-              color: '#4e3326',
+              background: soundEnabled ? 'rgba(15,80,68,0.5)' : 'rgba(8,40,55,0.45)',
+              color: soundEnabled ? '#7eeee0' : '#4a9a94',
               fontSize: 13,
-              fontWeight: 700,
+              fontWeight: 900,
               cursor: 'pointer',
+              border: `1px solid ${soundEnabled ? 'rgba(100,220,200,0.35)' : 'rgba(60,160,150,0.2)'}`,
             }}
           >
-            <span>{soundEnabled ? '🌊' : '🔈'}</span>
-            {soundEnabled ? '关闭海浪与人声' : '开启海浪与人声'}
+            <span>{soundEnabled ? '🌊' : '🔇'}</span>
+            {soundEnabled ? '关闭海浪声' : '开启海浪声'}
           </button>
         </div>
 
@@ -507,18 +599,20 @@ export default function XuhuiIslandPage() {
             flexWrap: 'wrap',
             fontSize: 'clamp(30px, 5vw, 48px)',
             lineHeight: 1.04,
+            color: '#b8f0e8',
+            textShadow: '0 0 30px rgba(80,200,180,0.35)',
           }}
         >
           <span style={{ fontSize: '1.18em', lineHeight: 1 }}>🏝️</span>
-          <span>Island of Flavors 解锁8大秘境 · Jinyang, Shanghai</span>
+          <span>美食之岛 · 解锁8大秘境 · 金杨, 上海</span>
         </h1>
-        <p style={{ margin: '14px 0 0', maxWidth: 760, fontSize: 16, lineHeight: 1.8, color: '#6d5141' }}>
-          和岛上的龙虾一起逛逛金杨地区的人气餐厅，看看哪家最热闹、哪家福利最多，挑一家直接进店开聊。
+        <p style={{ margin: '14px 0 0', maxWidth: 760, fontSize: 16, lineHeight: 1.8, color: 'rgba(160,230,220,0.72)' }}>
+          这片漂浮在蓝绿色海洋上的美食岛，藏着8家各有烟火气的餐厅。和岛上的小龙虾一起探索，进店开聊、看菜单、赚积分！
         </p>
       </section>
 
       <section style={mapShellStyle}>
-        <div style={mapBoardStyle}>
+        <div ref={mapBoardRef} style={mapBoardStyle}>
           <video
             ref={backgroundVideoRef}
             autoPlay
@@ -915,22 +1009,46 @@ export default function XuhuiIslandPage() {
                   }}
                 />
 
-                <img
-                  src={shop.image}
-                  alt={shop.name}
-                  width={displaySize}
-                  height={displaySize}
-                  draggable={false}
-                  style={{
-                    display: 'block',
-                    width: displaySize,
-                    height: displaySize,
-                    objectFit: 'contain',
-                    transform: isHovered ? 'translateY(-4px) scale(1.02)' : 'none',
-                    transition: 'transform 180ms ease',
-                    filter: 'drop-shadow(0 28px 36px rgba(0,0,0,0.34)) saturate(1.06)',
-                  }}
-                />
+                {/* 水波扩散效果 */}
+                <span style={{
+                  position: 'absolute',
+                  left: '50%',
+                  top: '58%',
+                  width: displaySize * 0.7,
+                  height: displaySize * 0.25,
+                  borderRadius: '50%',
+                  border: '1.5px solid rgba(80,200,180,0.25)',
+                  pointerEvents: 'none',
+                  zIndex: 1,
+                  animation: `ripple-expand ${3 + (hashShopId(shop.id) % 3) * 0.6}s ease-out ${(hashShopId(shop.id) % 4) * 0.5}s infinite`,
+                }} />
+                {/* 浮动动画包裹层：island-bob 在此层，不干扰图片的 hover transform */}
+                <div style={{
+                  display: 'block',
+                  width: displaySize,
+                  height: displaySize,
+                  animation: `island-bob ${4.5 + (hashShopId(shop.id) % 3) * 0.5}s ease-in-out ${(hashShopId(shop.id) % 5) * 0.4}s infinite`,
+                  position: 'relative',
+                  zIndex: 2,
+                }}>
+                  <img
+                    src={shop.image}
+                    alt={shop.name}
+                    width={displaySize}
+                    height={displaySize}
+                    draggable={false}
+                    className="island-shop-img"
+                    style={{
+                      display: 'block',
+                      width: displaySize,
+                      height: displaySize,
+                      objectFit: 'contain',
+                      transform: isHovered ? 'translateY(-6px) scale(1.03)' : 'translateY(0px) scale(1)',
+                      transition: 'transform 200ms ease',
+                      filter: 'drop-shadow(0 28px 36px rgba(0,0,0,0.38)) saturate(1.08)',
+                    }}
+                  />
+                </div>
               </button>
                 );
               })()
@@ -1013,13 +1131,14 @@ export default function XuhuiIslandPage() {
               zIndex: 5,
               padding: '10px 18px',
               borderRadius: 999,
-              background: 'rgba(0, 0, 0, 0.05)',
-              border: '1px solid rgba(255,255,255,0.18)',
+              background: 'rgba(5,30,50,0.65)',
+              border: '1px solid rgba(100,220,200,0.2)',
               backdropFilter: 'blur(14px)',
-              color: '#3f261c',
+              WebkitBackdropFilter: 'blur(14px)',
+              color: 'rgba(160,230,220,0.85)',
               fontSize: 12,
               fontWeight: 700,
-              boxShadow: '0 16px 30px rgba(67,39,25,0.16)',
+              boxShadow: '0 16px 30px rgba(0,20,40,0.3)',
               whiteSpace: 'nowrap',
             }}
           >
@@ -1036,16 +1155,20 @@ export default function XuhuiIslandPage() {
       >
         <div style={statsRowStyle}>
           <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: '#b36a39' }}>门店</div>
-            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900 }}>{XUHUI_SHOPS.length}</div>
+            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>🏪 入驻门店</div>
+            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900, color: '#7eeee0' }}>{XUHUI_SHOPS.length}</div>
           </div>
           <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: '#b36a39' }}>商场</div>
-            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900 }}>浦东 LCM</div>
+            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>📍 所在商场</div>
+            <div style={{ marginTop: 8, fontSize: 18, fontWeight: 900, color: '#7eeee0' }}>浦东 LCM</div>
           </div>
           <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: '#b36a39' }}>岛上巡游虾</div>
-            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900 }}>{lobsters.length}</div>
+            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>🦞 岛上巡游虾</div>
+            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900, color: '#7eeee0' }}>{lobsters.length}</div>
+          </div>
+          <div style={statCardStyle}>
+            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>🌊 世界观</div>
+            <div style={{ marginTop: 8, fontSize: 14, fontWeight: 900, color: '#7eeee0', lineHeight: 1.4 }}>漂浮海洋上的美食岛</div>
           </div>
         </div>
       </section>
@@ -1069,6 +1192,31 @@ export default function XuhuiIslandPage() {
 
         .status-dot-3 {
           animation-delay: 0.4s;
+        }
+
+        /* 海洋水波流动动效 */
+        .ocean-wave-deep {
+          animation: ocean-flow-x 18s linear infinite;
+          opacity: 0.6;
+        }
+        .ocean-wave-mid {
+          animation: ocean-flow-x 12s linear infinite reverse;
+          opacity: 0.5;
+        }
+
+        /* 岛屿轻微上下浮动 */
+        .island-float {
+          animation: island-bob 5s ease-in-out infinite;
+        }
+
+        @keyframes ocean-flow-x {
+          0% { background-position-x: 0; }
+          100% { background-position-x: 200px; }
+        }
+
+        @keyframes island-bob {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-3px); }
         }
 
         @keyframes steam-rise {
@@ -1116,6 +1264,19 @@ export default function XuhuiIslandPage() {
           50% {
             opacity: 1;
           }
+        }
+
+        /* 水波扩散效果 */
+        @keyframes ripple-expand {
+          0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0.6; }
+          100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+        }
+
+        /* 数字跳动 */
+        @keyframes num-bounce {
+          0%, 100% { transform: translateY(0) scale(1); }
+          40% { transform: translateY(-3px) scale(1.05); }
+          65% { transform: translateY(1px) scale(0.97); }
         }
       `}</style>
     </main>

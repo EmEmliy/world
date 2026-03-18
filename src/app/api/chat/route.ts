@@ -4,11 +4,11 @@ import { SYSTEM_PROMPT } from '@/config/prompts';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { messages } = body;
+    const { messages, systemPrompt } = body;
 
     const apiKey = process.env.MINIMAX_API_KEY;
     const model = process.env.MINIMAX_MODEL || 'MiniMax-M2.5-highspeed';
-    const baseUrl = process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1';
+    const baseUrl = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.com/v1';
 
     const url = `${baseUrl}/chat/completions`;
 
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     }
 
     const allMessages = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt || SYSTEM_PROMPT },
       ...messages
     ];
 
