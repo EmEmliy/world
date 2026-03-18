@@ -2,9 +2,22 @@ export type ShopActionId = 'work' | 'menu' | 'guest-chat' | 'owner-chat';
 
 export interface ShopMenuItem {
   name: string;
+  /** 原价 */
   price: number;
+  /** 优惠价（可选） */
+  salePrice?: number;
   tag: string;
   desc: string;
+  /** 今日可提供份数，0 = 售罄 */
+  stock?: number;
+  /** 点单热度 0-100 */
+  heatScore?: number;
+  /** 老板推荐 */
+  ownerPick?: boolean;
+  /** 配量说明 */
+  portion?: string;
+  /** 推荐指数 1-5 */
+  stars?: number;
 }
 
 export interface ShopAction {
@@ -34,6 +47,12 @@ export interface XuhuiShop {
   size: number;
   baseVisitors: number;
   crowdLevel: 'normal' | 'busy' | 'packed';
+  /** 营业开始小时 0-23 */
+  openHour: number;
+  /** 营业结束小时，>24 表示过凌晨，如 25 = 凌晨 1 点 */
+  closeHour: number;
+  /** 是否 24h 营业 */
+  isAllDay?: boolean;
   intro: string;
   owner: string;
   ownerTitle: string;
@@ -49,7 +68,9 @@ export interface XuhuiShop {
     floorTone: string;
     wallTone: string;
     accent: string;
+    /** 顾客座位坐标（椅子旁，桌子外缘）% */
     seats: ShopSceneAnchor[];
+    /** 员工/老板走动坐标（桌间走廊）% */
     walkPath: ShopSceneAnchor[];
   };
 }
@@ -69,6 +90,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 88,
     baseVisitors: 22,
     crowdLevel: 'normal',
+    openHour: 9,
+    closeHour: 21,
     intro: '开放式西餐小馆，适合下午茶、早午餐和轻社交，招牌是高颜值甜品与轻食组合。',
     owner: '高高姐',
     ownerTitle: '主理人',
@@ -93,11 +116,20 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#f4d6b7',
       wallTone: '#fff5ea',
       accent: '#ff9d6f',
+      // gaga: 吧台区(左)+ 散座区(右)，共 3 组桌位
       seats: [
-        { x: 20, y: 62 }, { x: 32, y: 70 }, { x: 48, y: 62 }, { x: 64, y: 70 }, { x: 78, y: 62 },
+        // 左侧吧台高脚椅（y 更高 = 更靠近画面上方桌子）
+        { x: 14, y: 50 }, { x: 20, y: 54 }, { x: 26, y: 50 },
+        // 中区小圆桌（2人位）
+        { x: 42, y: 44 }, { x: 50, y: 50 }, { x: 40, y: 56 }, { x: 52, y: 57 },
+        // 右区小方桌（4人位）
+        { x: 66, y: 40 }, { x: 74, y: 44 }, { x: 80, y: 50 }, { x: 70, y: 54 },
+        // 右窗边桌（较远/高）
+        { x: 84, y: 36 }, { x: 90, y: 42 },
       ],
       walkPath: [
-        { x: 16, y: 34 }, { x: 32, y: 28 }, { x: 48, y: 32 }, { x: 68, y: 28 }, { x: 82, y: 34 },
+        { x: 18, y: 62 }, { x: 34, y: 56 }, { x: 52, y: 62 },
+        { x: 68, y: 56 }, { x: 84, y: 62 },
       ],
     },
   },
@@ -115,6 +147,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 92,
     baseVisitors: 31,
     crowdLevel: 'packed',
+    openHour: 11,
+    closeHour: 23,
     intro: '偏闽南烟火气的热炒馆，晚餐时段最热闹，招牌海鲜和沙茶味很冲。',
     owner: '阿忠叔',
     ownerTitle: '掌勺老板',
@@ -139,11 +173,20 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#e2c19d',
       wallTone: '#fff0df',
       accent: '#d66a31',
+      // 阿忠食坊：2 张大辺桌 + 左下散座，共 14 个座位
       seats: [
-        { x: 18, y: 64 }, { x: 30, y: 72 }, { x: 46, y: 64 }, { x: 58, y: 72 }, { x: 72, y: 64 }, { x: 84, y: 72 },
+        // 左大桌（6 把椅，围绕 x≈22,y≈42）
+        { x: 14, y: 40 }, { x: 22, y: 36 }, { x: 30, y: 40 },
+        { x: 30, y: 48 }, { x: 22, y: 52 }, { x: 14, y: 48 },
+        // 右大桌（6 把椅，围绕 x≈60,y≈42）
+        { x: 52, y: 40 }, { x: 60, y: 36 }, { x: 68, y: 40 },
+        { x: 68, y: 48 }, { x: 60, y: 52 }, { x: 52, y: 48 },
+        // 右下角小桌（2人位，较近前景）
+        { x: 80, y: 52 }, { x: 88, y: 58 },
       ],
       walkPath: [
-        { x: 14, y: 34 }, { x: 28, y: 28 }, { x: 44, y: 34 }, { x: 60, y: 28 }, { x: 76, y: 34 }, { x: 88, y: 28 },
+        { x: 18, y: 62 }, { x: 36, y: 56 }, { x: 52, y: 62 },
+        { x: 68, y: 56 }, { x: 84, y: 62 },
       ],
     },
   },
@@ -162,6 +205,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 94,
     baseVisitors: 28,
     crowdLevel: 'busy',
+    openHour: 11,
+    closeHour: 21,
     intro: '带点宴请感的新台州菜，适合家庭聚餐，讲究大菜上桌和分餐节奏。',
     owner: '锦老板',
     ownerTitle: '店长',
@@ -186,11 +231,21 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#d8bea4',
       wallTone: '#fff2e7',
       accent: '#8f5c3d',
+      // 锦府园：3 张大圆桌，等轴透视 y 值偏小=靠近画面上方
       seats: [
-        { x: 22, y: 64 }, { x: 38, y: 64 }, { x: 54, y: 64 }, { x: 70, y: 64 }, { x: 82, y: 74 },
+        // 左桌（前景，x≈18-36, y≈58-72）
+        { x: 18, y: 58 }, { x: 26, y: 54 }, { x: 34, y: 58 },
+        { x: 34, y: 66 }, { x: 26, y: 70 }, { x: 18, y: 66 },
+        // 中桌（中间，x≈46-62, y≈48-62）
+        { x: 46, y: 46 }, { x: 54, y: 42 }, { x: 62, y: 46 },
+        { x: 62, y: 54 }, { x: 54, y: 58 }, { x: 46, y: 54 },
+        // 右桌（远景，x≈68-86, y≈32-46）
+        { x: 68, y: 34 }, { x: 76, y: 30 }, { x: 84, y: 34 },
+        { x: 84, y: 42 }, { x: 76, y: 46 }, { x: 68, y: 42 },
       ],
       walkPath: [
-        { x: 14, y: 30 }, { x: 30, y: 24 }, { x: 48, y: 30 }, { x: 66, y: 24 }, { x: 84, y: 30 },
+        { x: 14, y: 72 }, { x: 30, y: 66 }, { x: 48, y: 60 },
+        { x: 64, y: 54 }, { x: 80, y: 48 },
       ],
     },
   },
@@ -208,6 +263,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 94,
     baseVisitors: 26,
     crowdLevel: 'busy',
+    openHour: 9,
+    closeHour: 21,
     intro: '偏港式茶楼感，蒸笼区和点心车是核心体验，适合逛一圈再慢慢点。',
     owner: '蔡师傅',
     ownerTitle: '主理人',
@@ -232,11 +289,14 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#ecd2b8',
       wallTone: '#fff6ee',
       accent: '#c45138',
+      // 蔡澜点心：港式茶楼，桌子散布全场
       seats: [
-        { x: 18, y: 66 }, { x: 32, y: 74 }, { x: 48, y: 66 }, { x: 62, y: 74 }, { x: 78, y: 66 },
+        { x: 14, y: 54 }, { x: 26, y: 48 }, { x: 42, y: 56 },
+        { x: 56, y: 44 }, { x: 70, y: 50 }, { x: 84, y: 40 },
       ],
       walkPath: [
-        { x: 16, y: 30 }, { x: 32, y: 24 }, { x: 48, y: 30 }, { x: 64, y: 24 }, { x: 80, y: 30 },
+        { x: 18, y: 66 }, { x: 36, y: 60 }, { x: 52, y: 66 },
+        { x: 68, y: 60 }, { x: 84, y: 66 },
       ],
     },
   },
@@ -255,6 +315,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 92,
     baseVisitors: 34,
     crowdLevel: 'packed',
+    openHour: 10,
+    closeHour: 22,
     intro: '招牌油爆虾和家常热菜都很能打，晚餐高峰翻台快，现场烟火气最足。',
     owner: '老周',
     ownerTitle: '店长',
@@ -279,11 +341,21 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#deb995',
       wallTone: '#fff0de',
       accent: '#b54e2f',
+      // 老头儿油爆虾：3 张圆桌，从前景到远景分散
       seats: [
-        { x: 16, y: 64 }, { x: 28, y: 74 }, { x: 42, y: 64 }, { x: 56, y: 74 }, { x: 70, y: 64 }, { x: 84, y: 74 },
+        // 左圆桌（前景，6 把）
+        { x: 14, y: 60 }, { x: 22, y: 56 }, { x: 30, y: 60 },
+        { x: 30, y: 68 }, { x: 22, y: 72 }, { x: 14, y: 68 },
+        // 中圆桌（中景，6 把）
+        { x: 44, y: 48 }, { x: 52, y: 44 }, { x: 60, y: 48 },
+        { x: 60, y: 56 }, { x: 52, y: 60 }, { x: 44, y: 56 },
+        // 右圆桌（远景，4 把）
+        { x: 72, y: 36 }, { x: 80, y: 32 },
+        { x: 82, y: 40 }, { x: 74, y: 44 },
       ],
       walkPath: [
-        { x: 12, y: 30 }, { x: 28, y: 24 }, { x: 44, y: 30 }, { x: 60, y: 24 }, { x: 76, y: 30 }, { x: 88, y: 24 },
+        { x: 16, y: 74 }, { x: 32, y: 66 }, { x: 50, y: 58 },
+        { x: 66, y: 50 }, { x: 82, y: 44 },
       ],
     },
   },
@@ -299,7 +371,9 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 96,
     baseVisitors: 29,
     crowdLevel: 'busy',
-    intro: '重口味烤鱼馆，适合朋友聚餐，鱼锅和配菜会让桌面越煮越热闹。',
+    openHour: 10,
+    closeHour: 22,
+    intro: '活鱼现烤·多口味川味烤鱼，适合朋友聚餐，鱼锅和配菜越煮越热闹。综合评分 4.2，4448 条真实评价。',
     owner: '鱼老板',
     ownerTitle: '老板',
     ownerGreeting: '先看鱼锅，还是跟桌边龙虾聊聊哪种口味最上头？',
@@ -308,9 +382,30 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     ownerTopics: ['烤鱼店的高峰节奏', '大锅场景怎么在线上表现', '什么活动最容易出圈'],
     workTasks: ['补炭和酒精炉', '给锅里加配菜', '帮忙传锅上桌'],
     menu: [
-      { name: '青花椒烤鱼', price: 108, tag: '常胜', desc: '香麻不燥，适合第一次来。' },
-      { name: '香辣烤鱼', price: 108, tag: '重口', desc: '辣味更猛，朋友局很吃香。' },
-      { name: '魔芋鸭血拼盘', price: 26, tag: '加料', desc: '涮锅标配，越煮越入味。' },
+      // 主菜 - 烤全鱼
+      { name: '青花椒烤鱼', price: 128, salePrice: 108, tag: '常胜NO.1', desc: '香麻不燥、鱼肉细嫩，适合第一次来的必选款。活鱼现烤，青花椒香气扑鼻。', stock: 40, heatScore: 95, ownerPick: true, portion: '约 2-3 人份', stars: 5 },
+      { name: '香辣烤鱼', price: 128, salePrice: 108, tag: '重口爆单', desc: '辣味更猛更过瘾，朋友局和宵夜场最吃香，适合无辣不欢。', stock: 35, heatScore: 90, portion: '约 2-3 人份', stars: 5 },
+      { name: '酱香烤鱼', price: 128, salePrice: 108, tag: '下饭王', desc: '浓郁酱香底，入味深，配米饭绝配，老少皆宜。', stock: 20, heatScore: 78, portion: '约 2-3 人份', stars: 4 },
+      { name: '茄汁烤鱼（不辣）', price: 128, salePrice: 108, tag: '不辣款', desc: '蛋香茄汁口味，不辣版首选，酸甜开胃，适合怕辣的朋友。', stock: 15, heatScore: 72, portion: '约 2-3 人份', stars: 4 },
+      { name: '怪味烤鱼', price: 128, salePrice: 108, tag: '挑战款', desc: '甜酸辣三味复合，第一口懵第二口上头，资深食客挚爱。', stock: 8, heatScore: 65, portion: '约 2-3 人份', stars: 4 },
+      // 单人冒桶
+      { name: '单人冒菜桶（青花椒）', price: 41.9, salePrice: 24.4, tag: '新客价', desc: '单人爆款，新客价直接6折。活鱼冒桶，分量足、出餐快。', stock: 60, heatScore: 99, ownerPick: true, portion: '1人份', stars: 5 },
+      { name: '活鱼冒桶', price: 32, salePrice: 28.2, tag: '门店销量第1', desc: '回头客最爱，活鱼现做，汤底鲜美，常驻榜首。', stock: 50, heatScore: 96, portion: '1人份', stars: 5 },
+      // 套餐
+      { name: '双人餐套餐', price: 257, salePrice: 188.99, tag: '双人优选', desc: '烤鱼+配菜+饮品，双人最划算组合，约 7.4 折。', stock: 25, heatScore: 85, ownerPick: true, portion: '2人份', stars: 5 },
+      { name: '三人餐套餐', price: 380, salePrice: 308, tag: '三人聚餐', desc: '三人聚餐标配，含一条烤鱼+配菜+饮品，约 8.1 折。', stock: 18, heatScore: 80, portion: '3人份', stars: 4 },
+      { name: '多人餐套餐', price: 520, salePrice: 397.99, tag: '聚餐首选', desc: '4人以上聚餐，含大份烤鱼+丰富配菜，性价比拉满。', stock: 12, heatScore: 76, portion: '4-5人份', stars: 4 },
+      // 配菜
+      { name: '魔芋鸭血拼盘', price: 26, tag: '加料必点', desc: '涮锅标配，越煮越入味，鸭血嫩滑魔芋弹牙。', stock: 80, heatScore: 88, portion: '2-3人份', stars: 4 },
+      { name: '娃娃菜', price: 12, tag: '解腻', desc: '清甜娃娃菜，平衡重口锅底的好搭档。', stock: 99, heatScore: 60, portion: '1-2人份', stars: 3 },
+      { name: '腐竹', price: 10, tag: '吸汁王', desc: '吸满锅底精华，越煮越香软。', stock: 99, heatScore: 65, portion: '1-2人份', stars: 3 },
+      { name: '脆皮肠', price: 14, tag: '小吃', desc: '烤至焦脆，肠内多汁，大人小孩都爱。', stock: 40, heatScore: 70, portion: '1-2人份', stars: 4 },
+      // 小吃
+      { name: '口水鸡', price: 32, tag: '凉菜', desc: '麻辣鲜香，先上这道等鱼的时候先开吃。', stock: 20, heatScore: 75, portion: '2人份', stars: 4 },
+      { name: '蕨根粉', price: 18, tag: '主食', desc: '弹牙爽滑，拌入烤鱼汤底超香。', stock: 35, heatScore: 72, portion: '1-2人份', stars: 4 },
+      // 饮品
+      { name: '山楂饮', price: 12, tag: '解腻饮', desc: '酸甜山楂，解辣解腻效果一流。', stock: 99, heatScore: 55, portion: '1杯', stars: 3 },
+      { name: '柠檬茶', price: 12, tag: '清爽', desc: '清新柠檬，搭配重口烤鱼刚刚好。', stock: 99, heatScore: 58, portion: '1杯', stars: 3 },
     ],
     actions: [
       { id: 'work', title: '进店打工', subtitle: '传锅补菜局', description: '适合做重场景互动，积分涨得快。' },
@@ -323,11 +418,20 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#deb995',
       wallTone: '#fff3e4',
       accent: '#2f6ea0',
+      // 江边城外：成排套间，等轴透视从左下到右上
       seats: [
-        { x: 18, y: 66 }, { x: 34, y: 74 }, { x: 50, y: 66 }, { x: 66, y: 74 }, { x: 82, y: 66 },
+        // 左前桌（4 把）
+        { x: 14, y: 62 }, { x: 22, y: 58 }, { x: 26, y: 66 }, { x: 18, y: 70 },
+        // 左中桌（4 把）
+        { x: 34, y: 50 }, { x: 42, y: 46 }, { x: 46, y: 54 }, { x: 38, y: 58 },
+        // 右中桌（4 把）
+        { x: 56, y: 40 }, { x: 64, y: 36 }, { x: 68, y: 44 }, { x: 60, y: 48 },
+        // 右远桌（2 把）
+        { x: 76, y: 30 }, { x: 84, y: 34 },
       ],
       walkPath: [
-        { x: 14, y: 30 }, { x: 30, y: 24 }, { x: 48, y: 30 }, { x: 66, y: 24 }, { x: 84, y: 30 },
+        { x: 18, y: 74 }, { x: 34, y: 64 }, { x: 50, y: 54 },
+        { x: 66, y: 44 }, { x: 82, y: 36 },
       ],
     },
   },
@@ -345,6 +449,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 92,
     baseVisitors: 24,
     crowdLevel: 'busy',
+    openHour: 11,
+    closeHour: 26, // 凌晨 2 点
     intro: '牛蛙锅和香辣口味是主打，整体氛围活跃，年轻客群多，适合社交聚餐。',
     owner: '蛙姐',
     ownerTitle: '店长',
@@ -369,11 +475,20 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#e7c7a7',
       wallTone: '#fff4e8',
       accent: '#8bbf43',
+      // 蛙来哒：等轴布局，从左前到右远
       seats: [
-        { x: 18, y: 66 }, { x: 34, y: 74 }, { x: 50, y: 66 }, { x: 66, y: 74 }, { x: 82, y: 66 },
+        // 左区圆桌（6把，前景）
+        { x: 14, y: 62 }, { x: 22, y: 58 }, { x: 30, y: 62 },
+        { x: 30, y: 70 }, { x: 22, y: 74 }, { x: 14, y: 70 },
+        // 中区圆桌（6把，中景）
+        { x: 48, y: 46 }, { x: 56, y: 42 }, { x: 64, y: 46 },
+        { x: 64, y: 54 }, { x: 56, y: 58 }, { x: 48, y: 54 },
+        // 右区小座（2把，远景）
+        { x: 76, y: 32 }, { x: 84, y: 36 },
       ],
       walkPath: [
-        { x: 14, y: 30 }, { x: 32, y: 24 }, { x: 50, y: 30 }, { x: 68, y: 24 }, { x: 86, y: 30 },
+        { x: 16, y: 76 }, { x: 34, y: 66 }, { x: 52, y: 56 },
+        { x: 68, y: 46 }, { x: 84, y: 38 },
       ],
     },
   },
@@ -392,6 +507,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 98,
     baseVisitors: 21,
     crowdLevel: 'normal',
+    openHour: 11,
+    closeHour: 22,
     intro: '偏温暖、慢节奏的寿喜烧场景，适合坐下慢慢煮，服务动作和食材上桌体验都很重要。',
     owner: '牛老板',
     ownerTitle: '店主',
@@ -416,11 +533,20 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
       floorTone: '#ead6c0',
       wallTone: '#fff8f1',
       accent: '#8b6f5a',
+      // 牛New寿喜烧：包厢式桌，从前景到远景
       seats: [
-        { x: 20, y: 66 }, { x: 36, y: 74 }, { x: 52, y: 66 }, { x: 68, y: 74 }, { x: 82, y: 66 },
+        // 左前桌（4 把）
+        { x: 14, y: 64 }, { x: 22, y: 60 }, { x: 24, y: 68 }, { x: 16, y: 72 },
+        // 左中桌（2 把）
+        { x: 36, y: 52 }, { x: 44, y: 48 },
+        // 右中桌（4 把）
+        { x: 54, y: 42 }, { x: 62, y: 38 }, { x: 66, y: 46 }, { x: 58, y: 50 },
+        // 右远桌（2 把）
+        { x: 74, y: 30 }, { x: 82, y: 34 },
       ],
       walkPath: [
-        { x: 14, y: 30 }, { x: 30, y: 24 }, { x: 48, y: 30 }, { x: 66, y: 24 }, { x: 84, y: 30 },
+        { x: 16, y: 76 }, { x: 34, y: 66 }, { x: 52, y: 56 },
+        { x: 68, y: 46 }, { x: 84, y: 38 },
       ],
     },
   },
