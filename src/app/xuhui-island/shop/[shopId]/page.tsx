@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { playAudioFile } from '@/lib/sound';
 import {
   type ShopActionId,
+  type ShopMenuItem,
   type XuhuiShop,
   XUHUI_SHOP_MAP,
 } from '@/config/xuhui-shops';
@@ -50,6 +52,20 @@ interface SceneActor {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+interface SceneDialogStateValue {
+  actorId: string;
+  stageId: SceneView;
+}
+
+interface SceneDialogMotion {
+  actorId: string;
+  stageId: SceneView;
+  fromX: number;
+  fromY: number;
+  fromSize: number;
+  phase: 'opening' | 'open' | 'closing';
 }
 
 interface ShopOpsSnapshot {
@@ -121,6 +137,64 @@ function getShopIcon(cuisine: string, shopId?: string): string {
   if (cuisine.includes('点心') || cuisine.includes('包子') || cuisine.includes('港式')) return '🥟';
   if (cuisine.includes('奶茶') || cuisine.includes('饮品') || cuisine.includes('茶')) return '🧋';
   return '🍽️';
+}
+
+const DEFAULT_MENU_PROMO_BADGES = [
+  { text: '🧧 满20减14', color: 'rgba(230,60,60,0.85)' },
+  { text: '🆕 新客立减', color: 'rgba(230,60,60,0.85)' },
+  { text: '⚡ 99减9', color: 'rgba(200,80,20,0.8)' },
+  { text: '💳 支付红包¥1.88', color: 'rgba(180,100,20,0.8)' },
+  { text: '🎯 收藏领5折券', color: 'rgba(40,140,80,0.85)' },
+  { text: '📦 集3单返5元', color: 'rgba(40,100,200,0.85)' },
+];
+
+function buildLegacyMenuCategories(shop: XuhuiShop, excludedNames = new Set<string>()) {
+  return [
+    { key: 'main', label: '🐟 主菜·烤全鱼', items: shop.menu.filter((m) => !excludedNames.has(m.name) && (m.tag.includes('NO.1') || m.tag.includes('重口') || m.tag.includes('下饭王') || m.tag.includes('不辣') || m.tag.includes('挑战'))) },
+    { key: 'bucket', label: '🪣 单人冒桶', items: shop.menu.filter((m) => !excludedNames.has(m.name) && (m.tag.includes('新客价') || m.tag.includes('销量第1'))) },
+    { key: 'combo', label: '🎁 超值套餐', items: shop.menu.filter((m) => !excludedNames.has(m.name) && (m.tag.includes('双人') || m.tag.includes('三人') || m.tag.includes('聚餐首选'))) },
+    { key: 'side', label: '🥬 配菜加料', items: shop.menu.filter((m) => !excludedNames.has(m.name) && (m.tag.includes('加料') || m.tag.includes('解腻') || m.tag.includes('吸汁') || m.tag.includes('小吃') || m.portion?.includes('1-2人'))) },
+    { key: 'snack', label: '🍗 小吃凉菜', items: shop.menu.filter((m) => !excludedNames.has(m.name) && (m.tag.includes('凉菜') || m.tag.includes('主食'))) },
+    { key: 'drink', label: '🧃 饮品', items: shop.menu.filter((m) => !excludedNames.has(m.name) && (m.tag.includes('解腻饮') || m.tag.includes('清爽'))) },
+  ].filter((category) => category.items.length > 0);
+}
+
+function buildMenuCategories(shop: XuhuiShop) {
+  const explicitGroups = new Map<string, ShopMenuItem[]>();
+  const categorizedNames = new Set<string>();
+
+  shop.menu.forEach((item) => {
+    if (!item.category) return;
+    categorizedNames.add(item.name);
+    const existing = explicitGroups.get(item.category);
+    if (existing) {
+      existing.push(item);
+      return;
+    }
+    explicitGroups.set(item.category, [item]);
+  });
+
+  const explicitCategories = Array.from(explicitGroups.entries()).map(([label, items], index) => ({
+    key: `custom-${index}`,
+    label,
+    items,
+  }));
+
+  if (explicitCategories.length === 0) {
+    const legacyCategories = buildLegacyMenuCategories(shop);
+    return legacyCategories.length > 0
+      ? legacyCategories
+      : [{ key: 'all', label: '🍽️ 店铺推荐', items: shop.menu }];
+  }
+
+  const uncategorizedItems = shop.menu.filter((item) => !categorizedNames.has(item.name));
+  const legacyCategories = buildLegacyMenuCategories(shop, categorizedNames);
+
+  if (legacyCategories.length > 0) return [...explicitCategories, ...legacyCategories];
+  if (uncategorizedItems.length > 0) {
+    return [...explicitCategories, { key: 'other', label: '🍽️ 其他推荐', items: uncategorizedItems }];
+  }
+  return explicitCategories;
 }
 
 const pageStyle: CSSProperties = {
@@ -522,6 +596,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
   const shop = XUHUI_SHOP_MAP[params.shopId];
   const [activeAction, setActiveAction] = useState<ShopActionId>('work');
   const [sceneFocus, setSceneFocus] = useState<SceneView>('hall');
+  const [showAllTopDishes, setShowAllTopDishes] = useState(false);
   const [points, setPoints] = useState(() => {
     if (typeof window === 'undefined') return 120;
     return Number(localStorage.getItem('world:points') ?? 120);
@@ -546,12 +621,17 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
   const kitchenAudioRef = useRef<HTMLAudioElement>(null);
 
   // 场景内对话状态：{ actorId, stageId } 表示当前在哪个场景点击了哪个角色
-  const [sceneDialogState, setSceneDialogState] = useState<{ actorId: string; stageId: SceneView } | null>(null);
+  const [sceneDialogState, setSceneDialogState] = useState<SceneDialogStateValue | null>(null);
+  const [sceneDialogMotion, setSceneDialogMotion] = useState<SceneDialogMotion | null>(null);
+  const sceneDialogCloseTimerRef = useRef<number | null>(null);
   // hover 中的角色
   const [hoveredActorKey, setHoveredActorKey] = useState<string | null>(null);
   // 场景内对话输入
   const [sceneDialogInput, setSceneDialogInput] = useState('');
   const sceneDialogScrollRef = useRef<HTMLDivElement>(null);
+  // 放大对话模式
+  const [sceneDialogExpanded, setSceneDialogExpanded] = useState(false);
+  const expandedScrollRef = useRef<HTMLDivElement>(null);
   // 菜单弹窗
   const [menuModalOpen, setMenuModalOpen] = useState(false);
   // 点单模式：'dine' 堂食 | 'delivery' 外送 | 'coupon' 囤券
@@ -650,10 +730,17 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
   }, [shop.id]);
 
   useEffect(() => {
+    if (sceneDialogCloseTimerRef.current) {
+      window.clearTimeout(sceneDialogCloseTimerRef.current);
+      sceneDialogCloseTimerRef.current = null;
+    }
     setActors(buildInitialActors(shop));
     setActiveAction('work');
     setSceneFocus('hall');
+    setShowAllTopDishes(false);
     setSelectedActorId('owner-0');
+    setSceneDialogState(null);
+    setSceneDialogMotion(null);
     // 切换商铺时从 sessionStorage 恢复该商铺的对话历史
     try {
       const raw = sessionStorage.getItem(`world:chat:${shop.id}`);
@@ -670,21 +757,40 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (sceneDialogCloseTimerRef.current) {
+        window.clearTimeout(sceneDialogCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const storedState = window.sessionStorage.getItem('xuhui-ambient-enabled');
     if (!storedState) window.sessionStorage.setItem('xuhui-ambient-enabled', '1');
     const shouldEnable = storedState !== '0';
     setSoundEnabled(shouldEnable);
 
-    const playAmbient = async () => {
-      try {
-        kitchenAudioRef.current!.currentTime = 0;
-        await kitchenAudioRef.current?.play();
-      } catch (error) {
-        console.error('Shop ambient resume failed:', error);
-      }
+    if (!shouldEnable) return;
+
+    const audio = kitchenAudioRef.current;
+    if (!audio) return;
+
+    // 先尝试直接播放（若用户已有交互则能成功）
+    const tryPlay = () => {
+      audio.currentTime = 0;
+      audio.play().catch(() => {
+        // 浏览器自动播放策略拦截：等待用户首次交互后再播放
+        const onInteract = () => {
+          audio.play().catch(() => {/* ignore */});
+          window.removeEventListener('pointerdown', onInteract);
+          window.removeEventListener('keydown', onInteract);
+        };
+        window.addEventListener('pointerdown', onInteract, { once: true });
+        window.addEventListener('keydown', onInteract, { once: true });
+      });
     };
 
-    if (shouldEnable) void playAmbient();
+    tryPlay();
   }, []);
 
   const chatActors = useMemo(() => actors.map((actor) => ({ ...actor })), [actors]);
@@ -724,6 +830,12 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
           );
 
           return current.map((actor) => {
+            if (sceneDialogState?.actorId === actor.id) {
+              return {
+                ...actor,
+                bubbleVisible: false,
+              };
+            }
             // 已入座的客人：小幅动态，但不换座位
             if (actor.anchorType === 'seat' && actor.seatIndex >= 0) {
               const seat = shop.scene.seats[actor.seatIndex];
@@ -823,13 +935,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
       window.clearTimeout(startDelay);
       window.clearInterval(timer);
     };
-  }, [shop]);
-
-  const crowdCopy = useMemo(() => {
-    if (shop.crowdLevel === 'packed') return '店里已经爆满，适合做高峰期玩法。';
-    if (shop.crowdLevel === 'busy') return '店里很热闹，能感受到真实门店节奏。';
-    return '店里比较舒服，适合慢慢逛和深聊。';
-  }, [shop]);
+  }, [sceneDialogState?.actorId, shop]);
 
   const sceneStages = useMemo(
     () => [
@@ -837,7 +943,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
         id: 'kitchen' as const,
         title: '后厨',
         imageUrl: getSceneImageUrl(shop.id, 'kitchen'),
-        description: `这里是${shop.scene.counterLabel}与后场动线，厨师们各司其职。`,
+        description: '点点厨师聊一聊，看看现在出菜节奏、火候和备料安排。',
         // 厨房只显示 staff（厨师），老板在大堂迎客
         actors: actors.filter((actor) => actor.role === 'staff'),
       },
@@ -845,12 +951,12 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
         id: 'hall' as const,
         title: '大堂',
         imageUrl: getSceneImageUrl(shop.id, 'hall'),
-        description: crowdCopy,
+        description: '点点客人聊一聊，听听他们对口味、排队和服务的真实反馈。',
         // 大堂显示客人 + 老板（以及部分在外场跑堂的 staff）
         actors,
       },
     ],
-    [actors, crowdCopy, shop]
+    [actors, shop]
   );
 
   const appendChatMessage = (actor: SceneActor, nextMessage: ChatMessage) => {
@@ -1006,6 +1112,15 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
         return next;
       });
     } finally {
+      // AI 回复完成，播放提示音（用函数式读最新状态，避免闭包旧值）
+      setChatMessagesByActor((current) => {
+        const finalMsgs = current[actor.id] ?? [];
+        const lastMsg = finalMsgs[finalMsgs.length - 1];
+        if (lastMsg?.role === 'assistant' && lastMsg.content) {
+          playAudioFile('/iPhoneMessaage.mp3', 0.7);
+        }
+        return current; // 不改状态，只是借用读取
+      });
       setChatLoading(false);
       setStreamingActorId(null);
     }
@@ -1018,6 +1133,13 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
 
   // 场景内点击角色 → 打开场景对话浮层
   const handleSceneActorClick = (actor: SceneActor, stageId: SceneView) => {
+    playAudioFile('/paopao.mp3', 0.7);
+    if (sceneDialogCloseTimerRef.current) {
+      window.clearTimeout(sceneDialogCloseTimerRef.current);
+      sceneDialogCloseTimerRef.current = null;
+    }
+    const placement = actorPlacement(actor, stageId);
+    const fromSize = Math.max(actorCoreSize(actor.role) + 20, 84);
     // 初始化开场白
     setChatMessagesByActor((current) => {
       if ((current[actor.id]?.length ?? 0) > 0) return current;
@@ -1028,9 +1150,24 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
     });
     setSelectedActorId(actor.id);
     setSceneDialogState({ actorId: actor.id, stageId });
+    setSceneDialogMotion({
+      actorId: actor.id,
+      stageId,
+      fromX: placement.x,
+      fromY: placement.y,
+      fromSize,
+      phase: 'opening',
+    });
     setSceneDialogInput('');
     // 下一帧滚到底部
     requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setSceneDialogMotion((current) => (
+          current && current.actorId === actor.id && current.stageId === stageId
+            ? { ...current, phase: 'open' }
+            : current
+        ));
+      });
       if (sceneDialogScrollRef.current) {
         sceneDialogScrollRef.current.scrollTop = sceneDialogScrollRef.current.scrollHeight;
       }
@@ -1044,20 +1181,44 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
     if (!actor) return;
     const msg = sceneDialogInput.trim();
     setSceneDialogInput('');
+    playAudioFile('/message.mp3', 0.7);
     appendChatMessage(actor, { role: 'user', content: msg });
-    await callActorAI(actor, msg);
-    // 回复完成后滚底
+    // 用户消息加入后立即滚到底（普通 + 放大模式）
     requestAnimationFrame(() => {
       if (sceneDialogScrollRef.current) {
         sceneDialogScrollRef.current.scrollTop = sceneDialogScrollRef.current.scrollHeight;
+      }
+      if (expandedScrollRef.current) {
+        expandedScrollRef.current.scrollTop = expandedScrollRef.current.scrollHeight;
+      }
+    });
+    await callActorAI(actor, msg);
+    // 回复完成后滚底（普通 + 放大模式）
+    requestAnimationFrame(() => {
+      if (sceneDialogScrollRef.current) {
+        sceneDialogScrollRef.current.scrollTop = sceneDialogScrollRef.current.scrollHeight;
+      }
+      if (expandedScrollRef.current) {
+        expandedScrollRef.current.scrollTop = expandedScrollRef.current.scrollHeight;
       }
     });
   };
 
   // 关闭场景对话
   const closeSceneDialog = () => {
-    setSceneDialogState(null);
     setHoveredActorKey(null);
+    if (!sceneDialogState) return;
+    setSceneDialogMotion((current) => (current ? { ...current, phase: 'closing' } : null));
+    if (sceneDialogCloseTimerRef.current) {
+      window.clearTimeout(sceneDialogCloseTimerRef.current);
+    }
+    setSceneDialogExpanded(false);
+    sceneDialogCloseTimerRef.current = window.setTimeout(() => {
+      setSceneDialogState(null);
+      setSceneDialogMotion(null);
+      setSceneDialogInput('');
+      sceneDialogCloseTimerRef.current = null;
+    }, 560);
   };
 
   const toggleAmbientSound = async () => {
@@ -1087,6 +1248,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
 
     const userMessage = chatInput.trim();
     setChatInput('');
+    playAudioFile('/message.mp3', 0.7);
     appendChatMessage(selectedActor, { role: 'user', content: userMessage });
     await callActorAI(selectedActor, userMessage);
   };
@@ -1409,7 +1571,13 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
   };
 
   return (
-    <main style={pageStyle}>
+    <main
+      style={pageStyle}
+      onClickCapture={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('button')) playAudioFile('/usual.mp3', 0.4);
+      }}
+    >
       <audio ref={kitchenAudioRef} loop preload="auto">
         <source src="/restaurant.mp3" type="audio/mp3" />
       </audio>
@@ -1443,7 +1611,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
             {/* 顶栏：返回 + 音效 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Link href="/xuhui-island" style={{
+                <Link href="/xuhui-island" onClick={() => playAudioFile('/back.mp3', 0.6)} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,200,100,0.2)',
                   borderRadius: 20, padding: '7px 14px', color: 'rgba(255,220,150,0.85)',
@@ -1451,7 +1619,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                 }}>
                   ← 返回小岛
                 </Link>
-                <button type="button" onClick={toggleAmbientSound} style={{
+                <button type="button" onClick={() => { playAudioFile('/usual.mp3', 0.5); toggleAmbientSound(); }} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   background: soundEnabled ? 'rgba(255,120,40,0.18)' : 'rgba(255,255,255,0.05)',
                   border: `1px solid ${soundEnabled ? 'rgba(255,120,40,0.35)' : 'rgba(255,255,255,0.1)'}`,
@@ -1659,11 +1827,11 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                           </div>
                         </div>
 
-                        {/* 大堂状态：顾客情绪面板（右上角） */}
+                        {/* 大堂状态：顾客情绪面板（左侧，避免遮挡右侧对话框） */}
                         <div style={{
                           position: 'absolute',
-                          right: 18,
-                          top: 58,
+                          left: 18,
+                          top: 106,
                           width: 180,
                           padding: '12px 14px',
                           borderRadius: 18,
@@ -1940,6 +2108,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                       const actorKey = `${stage.id}-${actor.id}`;
                       const isHovered = hoveredActorKey === actorKey;
                       const isDialogOpen = sceneDialogState?.actorId === actor.id && sceneDialogState?.stageId === stage.id;
+                      const isDialogMotionActor = sceneDialogMotion?.actorId === actor.id && sceneDialogMotion.stageId === stage.id;
                       // 所有角色都可对话（包括客人）
                       const isInteractable = true;
 
@@ -1953,9 +2122,10 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                             width: shellSize,
                             height: shellSize,
                             transform: 'translate(-50%, -50%)',
-                            transition: 'left 3.6s ease-in-out, top 3.6s ease-in-out',
+                            transition: 'left 3.6s ease-in-out, top 3.6s ease-in-out, opacity 0.22s ease',
                             zIndex: isDialogOpen ? 20 : actor.role === 'owner' ? 5 : actor.role === 'staff' ? 4 : 3,
-                            pointerEvents: isInteractable ? 'auto' : 'none',
+                            opacity: isDialogMotionActor ? 0 : 1,
+                            pointerEvents: isDialogMotionActor ? 'none' : (isInteractable ? 'auto' : 'none'),
                             cursor: isInteractable ? (isHovered ? 'pointer' : 'default') : 'default',
                           }}
                           onMouseEnter={() => isInteractable && setHoveredActorKey(actorKey)}
@@ -2110,9 +2280,16 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                       if (!sceneDialogState || sceneDialogState.stageId !== stage.id) return null;
                       const dialogActor = actors.find((a) => a.id === sceneDialogState.actorId);
                       if (!dialogActor) return null;
+                      const dialogMotion = sceneDialogMotion?.actorId === dialogActor.id && sceneDialogMotion.stageId === stage.id
+                        ? sceneDialogMotion
+                        : null;
                       const inKitchen = stage.id === 'kitchen';
                       const msgs = chatMessagesByActor[dialogActor.id] ?? [];
                       const isStreaming = streamingActorId === dialogActor.id;
+                      const avatarIsAtOrigin = dialogMotion?.phase === 'opening' || dialogMotion?.phase === 'closing';
+                      const avatarLeft = avatarIsAtOrigin ? `${dialogMotion?.fromX ?? 50}%` : 'calc(100% - 339px)';
+                      const avatarTop = avatarIsAtOrigin ? `${dialogMotion?.fromY ?? 50}%` : 'calc(100% - 83px)';
+                      const avatarSize = avatarIsAtOrigin ? dialogMotion?.fromSize ?? 92 : 110;
                       return (
                         <div
                           style={{
@@ -2128,13 +2305,15 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                           <div
                             style={{
                               position: 'absolute',
-                              right: 284,
-                              bottom: 28,
-                              width: 110,
-                              height: 110,
+                              left: avatarLeft,
+                              top: avatarTop,
+                              width: avatarSize,
+                              height: avatarSize,
+                              transform: 'translate(-50%, -50%)',
                               zIndex: 31,
                               pointerEvents: 'none',
                               filter: 'drop-shadow(0 12px 32px rgba(0,0,0,0.35))',
+                              transition: 'left 0.56s cubic-bezier(0.22, 1, 0.36, 1), top 0.56s cubic-bezier(0.22, 1, 0.36, 1), width 0.56s cubic-bezier(0.22, 1, 0.36, 1), height 0.56s cubic-bezier(0.22, 1, 0.36, 1)',
                             }}
                           >
                             {/* 发光圆圈 */}
@@ -2155,8 +2334,8 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                                 position: 'absolute',
                                 left: '50%',
                                 top: '50%',
-                                width: '80%',
-                                height: '80%',
+                                width: '78%',
+                                height: '78%',
                                 transform: 'translate(-50%, -50%)',
                                 objectFit: 'contain',
                               }}
@@ -2195,6 +2374,9 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                               overflow: 'hidden',
                               zIndex: 32,
                               pointerEvents: 'auto',
+                              opacity: dialogMotion?.phase === 'closing' ? 0 : 1,
+                              transform: dialogMotion?.phase === 'closing' ? 'translateX(18px)' : 'translateX(0)',
+                              transition: 'opacity 0.24s ease, transform 0.24s ease',
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -2244,27 +2426,53 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                                   {getActorDisplayName(dialogActor, inKitchen)}
                                 </span>
                               </div>
-                              {/* 关闭按钮 */}
-                              <button
-                                type="button"
-                                style={{
-                                  background: 'rgba(255,255,255,0.1)',
-                                  border: 'none',
-                                  borderRadius: '50%',
-                                  width: 24,
-                                  height: 24,
-                                  cursor: 'pointer',
-                                  color: 'rgba(255,255,255,0.6)',
-                                  fontSize: 14,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
-                                }}
-                                onClick={closeSceneDialog}
-                              >
-                                ×
-                              </button>
+                              {/* 右侧按钮组 */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                {/* 放大按钮 */}
+                                <button
+                                  type="button"
+                                  title="放大对话"
+                                  style={{
+                                    background: 'rgba(255,200,100,0.15)',
+                                    border: '1px solid rgba(255,200,100,0.25)',
+                                    borderRadius: '50%',
+                                    width: 24,
+                                    height: 24,
+                                    cursor: 'pointer',
+                                    color: 'rgba(255,210,120,0.85)',
+                                    fontSize: 12,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                    transition: 'background 0.15s',
+                                  }}
+                                  onClick={(e) => { e.stopPropagation(); setSceneDialogExpanded(true); }}
+                                >
+                                  ⛶
+                                </button>
+                                {/* 关闭按钮 */}
+                                <button
+                                  type="button"
+                                  style={{
+                                    background: 'rgba(255,255,255,0.1)',
+                                    border: 'none',
+                                    borderRadius: '50%',
+                                    width: 24,
+                                    height: 24,
+                                    cursor: 'pointer',
+                                    color: 'rgba(255,255,255,0.6)',
+                                    fontSize: 14,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                  }}
+                                  onClick={closeSceneDialog}
+                                >
+                                  ×
+                                </button>
+                              </div>
                             </div>
 
                             {/* 消息列表（可滚动，用户可以用滚轮控制） */}
@@ -2280,7 +2488,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                                 scrollBehavior: 'smooth',
                               }}
                             >
-                              {msgs.map((msg, i) => (
+                              {msgs.filter((msg) => msg.content !== '').map((msg, i) => (
                                 <div
                                   key={i}
                                   style={{
@@ -2390,19 +2598,241 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                       );
                     })()}
 
+                    {/* ===== 放大对话模态框 ===== */}
+                    {sceneDialogExpanded && sceneDialogState && sceneDialogState.stageId === stage.id && (() => {
+                      const expandActor = actors.find((a) => a.id === sceneDialogState.actorId);
+                      if (!expandActor) return null;
+                      const expandInKitchen = stage.id === 'kitchen';
+                      const expandMsgs = chatMessagesByActor[expandActor.id] ?? [];
+                      const expandStreaming = streamingActorId === expandActor.id;
+                      return (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            zIndex: 60,
+                            background: 'rgba(10,4,2,0.78)',
+                            backdropFilter: 'blur(18px)',
+                            display: 'flex',
+                            alignItems: 'stretch',
+                            pointerEvents: 'auto',
+                          }}
+                          onClick={() => setSceneDialogExpanded(false)}
+                        >
+                          {/* 左侧：大头像区域 */}
+                          <div
+                            style={{
+                              width: '38%',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              paddingBottom: 40,
+                              position: 'relative',
+                              flexShrink: 0,
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {/* 大头像 */}
+                            <div style={{
+                              width: 160,
+                              height: 160,
+                              borderRadius: '50%',
+                              position: 'relative',
+                              filter: 'drop-shadow(0 16px 48px rgba(0,0,0,0.45))',
+                            }}>
+                              <div style={{
+                                position: 'absolute',
+                                inset: 0,
+                                borderRadius: '50%',
+                                background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92) 0%, ${actorGlow(expandActor.role).bubble} 56%, rgba(255,255,255,0.06) 100%)`,
+                                border: `2.5px solid ${actorGlow(expandActor.role).ring}`,
+                                boxShadow: `0 0 60px ${actorGlow(expandActor.role).shadow}, 0 0 120px rgba(255,200,100,0.15)`,
+                              }} />
+                              <img
+                                src={expandActor.variant}
+                                alt={expandActor.name}
+                                draggable={false}
+                                style={{
+                                  position: 'absolute',
+                                  left: '50%', top: '50%',
+                                  width: '78%', height: '78%',
+                                  transform: 'translate(-50%, -50%)',
+                                  objectFit: 'contain',
+                                }}
+                              />
+                            </div>
+                            {/* 角色名 + 角色标签 */}
+                            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                              <div style={{
+                                fontSize: 18, fontWeight: 900, color: '#ffd580',
+                                textShadow: '0 2px 8px rgba(0,0,0,0.8)',
+                              }}>
+                                {getActorDisplayName(expandActor, expandInKitchen)}
+                              </div>
+                              {expandActor.role === 'staff' && (
+                                <span style={{ background: expandInKitchen ? 'rgba(220,80,40,0.9)' : 'rgba(255,140,60,0.88)', color: '#fff', fontSize: 11, fontWeight: 900, padding: '2px 8px', borderRadius: 6 }}>
+                                  {expandInKitchen ? '厨师' : '服务员'}
+                                </span>
+                              )}
+                              {expandActor.role === 'owner' && (
+                                <span style={{ background: 'rgba(190,100,30,0.92)', color: '#fff9e0', fontSize: 11, fontWeight: 900, padding: '2px 8px', borderRadius: 6 }}>老板</span>
+                              )}
+                              {expandActor.role === 'guest' && (
+                                <span style={{ background: 'rgba(60,140,220,0.88)', color: '#fff', fontSize: 11, fontWeight: 900, padding: '2px 8px', borderRadius: 6 }}>客人</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 右侧：大对话框 */}
+                          <div
+                            style={{
+                              flex: 1,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              padding: '20px 20px 20px 0',
+                              minWidth: 0,
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {/* 顶栏 */}
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              marginBottom: 12,
+                              flexShrink: 0,
+                            }}>
+                              <span style={{ fontSize: 14, color: 'rgba(255,210,120,0.6)', fontWeight: 600 }}>对话</span>
+                              <button
+                                type="button"
+                                title="收起"
+                                style={{
+                                  background: 'rgba(255,255,255,0.1)',
+                                  border: 'none',
+                                  borderRadius: '50%',
+                                  width: 30,
+                                  height: 30,
+                                  cursor: 'pointer',
+                                  color: 'rgba(255,255,255,0.7)',
+                                  fontSize: 15,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                                onClick={() => setSceneDialogExpanded(false)}
+                              >
+                                ✕
+                              </button>
+                            </div>
+
+                            {/* 消息列表 */}
+                            <div
+                              ref={expandedScrollRef}
+                              style={{
+                                flex: 1,
+                                overflowY: 'auto',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 10,
+                                paddingRight: 6,
+                                scrollBehavior: 'smooth',
+                              }}
+                              className="expanded-dialog-scroll"
+                            >
+                              {expandMsgs.filter((m) => m.content !== '').map((msg, i) => (
+                                <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                                  <div style={{
+                                    maxWidth: '80%',
+                                    padding: '10px 14px',
+                                    borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                                    background: msg.role === 'user' ? 'rgba(215,108,44,0.82)' : 'rgba(255,255,255,0.1)',
+                                    color: '#fff',
+                                    fontSize: 15,
+                                    lineHeight: 1.65,
+                                    wordBreak: 'break-word',
+                                  }}>
+                                    {msg.content}
+                                  </div>
+                                </div>
+                              ))}
+                              {expandStreaming && (expandMsgs[expandMsgs.length - 1]?.content === '' || expandMsgs[expandMsgs.length - 1]?.role !== 'assistant') && (
+                                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                                  <div style={{ padding: '10px 14px', borderRadius: '16px 16px 16px 4px', background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.65)', fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'rgba(255,200,120,0.8)', animation: 'pulse 1s ease-in-out infinite' }} />
+                                    正在回复中...
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* 输入框 */}
+                            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexShrink: 0 }}>
+                              <input
+                                type="text"
+                                value={sceneDialogInput}
+                                onChange={(e) => setSceneDialogInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    void handleSceneDialogSend();
+                                  }
+                                }}
+                                placeholder={`和${expandActor.name}说…`}
+                                disabled={chatLoading}
+                                autoFocus
+                                style={{
+                                  flex: 1,
+                                  background: 'rgba(255,255,255,0.08)',
+                                  border: '1px solid rgba(255,200,120,0.25)',
+                                  borderRadius: 12,
+                                  padding: '10px 14px',
+                                  color: '#fff',
+                                  fontSize: 15,
+                                  outline: 'none',
+                                }}
+                              />
+                              <button
+                                type="button"
+                                disabled={chatLoading || !sceneDialogInput.trim()}
+                                onClick={() => void handleSceneDialogSend()}
+                                style={{
+                                  background: chatLoading || !sceneDialogInput.trim() ? 'rgba(255,255,255,0.12)' : 'rgba(215,108,44,0.88)',
+                                  border: 'none',
+                                  borderRadius: 12,
+                                  padding: '10px 20px',
+                                  color: '#fff',
+                                  fontSize: 15,
+                                  fontWeight: 700,
+                                  cursor: chatLoading || !sceneDialogInput.trim() ? 'not-allowed' : 'pointer',
+                                  flexShrink: 0,
+                                  transition: 'background 0.15s',
+                                }}
+                              >
+                                发送
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <div
                       style={{
                         position: 'absolute',
                         left: 18,
                         right: 18,
                         bottom: 18,
-                        ...darkChipStyle,
                         textAlign: 'center',
                         zIndex: 6,
-                        background:
-                          stage.id === sceneFocus
-                            ? 'rgba(33,24,20,0.8)'
-                            : 'rgba(33,24,20,0.68)',
+                        padding: '0 12px',
+                        fontSize: 14,
+                        fontWeight: 900,
+                        color: '#fff7ea',
+                        letterSpacing: 0.2,
+                        textShadow: '0 2px 10px rgba(0,0,0,0.95), 0 1px 0 rgba(0,0,0,0.9)',
+                        background: 'transparent',
+                        pointerEvents: 'none',
                       }}
                     >
                       {stage.description}
@@ -2501,7 +2931,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                         <span style={{ fontSize: 13, fontWeight: 700, color: '#d4f0d4' }}>{value}</span>
                         <span style={{
                           fontSize: 9, fontWeight: 900, padding: '1px 6px',
-                          borderRadius: 4, color: '#fff',
+                          borderRadius: 4,
                           background: tagColor + '55', border: `1px solid ${tagColor}88`,
                           color: tagColor,
                         }}>{tag}</span>
@@ -2524,14 +2954,36 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                 {/* 粉笔字标题 */}
                 <div style={{
                   fontSize: 11, fontWeight: 900, color: '#ffe082', letterSpacing: 1.5,
-                  marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6,
+                  marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
                 }}>
-                  <span>🏆 今日热卖榜</span>
-                  <span style={{ fontSize: 9, color: 'rgba(255,220,100,0.45)', fontWeight: 400 }}>老板亲推</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>🏆 今日热卖榜</span>
+                    <span style={{ fontSize: 9, color: 'rgba(255,220,100,0.45)', fontWeight: 400 }}>老板亲推</span>
+                  </div>
+                  {opsSnapshot.topDishes.length > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllTopDishes((prev) => !prev)}
+                      style={{
+                        border: '1px solid rgba(255,210,120,0.2)',
+                        background: 'rgba(255,220,120,0.08)',
+                        color: '#ffd98a',
+                        borderRadius: 999,
+                        padding: '4px 10px',
+                        fontSize: 10,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        lineHeight: 1,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {showAllTopDishes ? '↑ 收起' : '↓ 前 10 名'}
+                    </button>
+                  )}
                 </div>
 
                 <div style={{ display: 'grid', gap: 5 }}>
-                  {opsSnapshot.topDishes.map((dish, i) => {
+                  {(showAllTopDishes ? opsSnapshot.topDishes : opsSnapshot.topDishes.slice(0, 3)).map((dish, i) => {
                     const isTop3 = i < 3;
                     const medal = ['🥇','🥈','🥉'][i] ?? `${i+1}.`;
                     const tags = [
@@ -2853,15 +3305,26 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
 
           /* 场景对话浮层滚动条美化 */
           .scene-dialog-scroll::-webkit-scrollbar {
-            width: 4px;
+            width: 5px;
           }
           .scene-dialog-scroll::-webkit-scrollbar-track {
-            background: transparent;
-          }
-          .scene-dialog-scroll::-webkit-scrollbar-thumb {
-            background: rgba(255,200,120,0.3);
+            background: rgba(60,20,5,0.25);
             border-radius: 99px;
           }
+          .scene-dialog-scroll::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, rgba(255,200,100,0.55) 0%, rgba(200,120,40,0.45) 100%);
+            border-radius: 99px;
+            box-shadow: 0 0 4px rgba(255,180,60,0.2);
+          }
+          .scene-dialog-scroll::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, rgba(255,210,120,0.75) 0%, rgba(220,130,50,0.65) 100%);
+          }
+
+          /* 放大对话模态框滚动条 */
+          .expanded-dialog-scroll::-webkit-scrollbar { width: 5px; }
+          .expanded-dialog-scroll::-webkit-scrollbar-track { background: rgba(60,20,5,0.22); border-radius: 99px; }
+          .expanded-dialog-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(255,200,100,0.55) 0%, rgba(200,120,40,0.45) 100%); border-radius: 99px; }
+          .expanded-dialog-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(255,210,120,0.75) 0%, rgba(220,130,50,0.65) 100%); }
 
           @media (max-width: 1180px) {
             .shop-detail-layout {
@@ -2875,9 +3338,10 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
               align-items: stretch;
             }
           }
-        .menu-modal-scroll::-webkit-scrollbar { width: 4px; }
-        .menu-modal-scroll::-webkit-scrollbar-track { background: transparent; }
-        .menu-modal-scroll::-webkit-scrollbar-thumb { background: rgba(180,100,40,0.25); border-radius: 99px; }
+        .menu-modal-scroll::-webkit-scrollbar { width: 6px; }
+        .menu-modal-scroll::-webkit-scrollbar-track { background: rgba(80,30,10,0.18); border-radius: 99px; }
+        .menu-modal-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(255,160,60,0.55) 0%, rgba(200,90,20,0.45) 100%); border-radius: 99px; box-shadow: 0 0 6px rgba(255,140,40,0.25); }
+        .menu-modal-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(255,180,80,0.75) 0%, rgba(220,100,30,0.65) 100%); }
         @keyframes menu-modal-in {
           from { opacity: 0; transform: scale(0.95) translateY(16px); }
           to { opacity: 1; transform: scale(1) translateY(0); }
@@ -2920,15 +3384,13 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
 
       {/* ===== 菜单弹窗 ===== */}
       {menuModalOpen && (() => {
-        // 菜品分类
-        const categories = [
-          { key: 'main', label: '🐟 主菜·烤全鱼', items: shop.menu.filter((m) => m.tag.includes('NO.1') || m.tag.includes('重口') || m.tag.includes('下饭王') || m.tag.includes('不辣') || m.tag.includes('挑战')) },
-          { key: 'bucket', label: '🪣 单人冒桶', items: shop.menu.filter((m) => m.tag.includes('新客价') || m.tag.includes('销量第1')) },
-          { key: 'combo', label: '🎁 超值套餐', items: shop.menu.filter((m) => m.tag.includes('双人') || m.tag.includes('三人') || m.tag.includes('聚餐首选')) },
-          { key: 'side', label: '🥬 配菜加料', items: shop.menu.filter((m) => m.tag.includes('加料') || m.tag.includes('解腻') || m.tag.includes('吸汁') || m.tag.includes('小吃') || m.portion?.includes('1-2人')) },
-          { key: 'snack', label: '🍗 小吃凉菜', items: shop.menu.filter((m) => m.tag.includes('凉菜') || m.tag.includes('主食')) },
-          { key: 'drink', label: '🧃 饮品', items: shop.menu.filter((m) => m.tag.includes('解腻饮') || m.tag.includes('清爽')) },
-        ].filter((c) => c.items.length > 0);
+        const categories = buildMenuCategories(shop);
+        const menuAveragePrice = shop.menu.length > 0 ? Math.round(shop.menu.reduce((sum, item) => sum + item.price, 0) / shop.menu.length) : 89;
+        const menuTitle = shop.menuMeta?.title ?? shop.name;
+        const menuScoreText = shop.menuMeta?.scoreText ?? `⭐ 4.8 · ${opsSnapshot.completedOrders}单`;
+        const menuSummaryLine = shop.menuMeta?.summaryLine ?? `📍 LCM置汇旭辉广场 · 🕙 10:00–22:00 · 👥 人均¥${menuAveragePrice}`;
+        const menuPromoBadges = shop.menuMeta?.promoBadges ?? DEFAULT_MENU_PROMO_BADGES;
+        const ownerRecommendation = shop.menuMeta?.ownerRecommendation ?? `「来了就得试试我们的${shop.menu[0]?.name ?? '招牌菜'}，${shop.menu[0]?.desc?.slice(0, 16) ?? '每天必点，强烈推荐'}！人多聚餐强推${shop.menu[1]?.name ?? '双人套餐'}，现在折扣超划算。一个人来的别错过${shop.menu[2]?.name ?? '单人套餐'}，超值必点！」`;
 
         const cartTotal = Object.entries(cart).reduce((sum, [name, qty]) => {
           const item = shop.menu.find((m) => m.name === name);
@@ -2977,7 +3439,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 22, fontWeight: 900, color: '#ffd270' }}>{getShopIcon(shop.cuisine, shop.id)} {shop.name}</span>
+                      <span style={{ fontSize: 22, fontWeight: 900, color: '#ffd270' }}>{getShopIcon(shop.cuisine, shop.id)} {menuTitle}</span>
                       <span style={{
                         background: 'rgba(255,100,60,0.85)', color: '#fff',
                         fontSize: 10, fontWeight: 900, padding: '2px 7px', borderRadius: 8,
@@ -2986,21 +3448,14 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                         background: 'rgba(255,180,40,0.2)', color: '#ffd270',
                         fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 8,
                         border: '1px solid rgba(255,180,40,0.3)',
-                      }}>⭐ 4.8 · {opsSnapshot.completedOrders}单</span>
+                      }}>{menuScoreText}</span>
                     </div>
                     <div style={{ marginTop: 6, fontSize: 12, color: 'rgba(255,200,130,0.6)', lineHeight: 1.6 }}>
-                      📍 LCM置汇旭辉广场 · 🕙 10:00–22:00 · 👥 人均¥{shop.menu.length > 0 ? Math.round(shop.menu.reduce((s, m) => s + m.price, 0) / shop.menu.length) : 89}
+                      {menuSummaryLine}
                     </div>
                     {/* 活动横幅 */}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-                      {[
-                        { text: '🧧 满20减14', color: 'rgba(230,60,60,0.85)' },
-                        { text: '🆕 新客立减', color: 'rgba(230,60,60,0.85)' },
-                        { text: '⚡ 99减9', color: 'rgba(200,80,20,0.8)' },
-                        { text: '💳 支付红包¥1.88', color: 'rgba(180,100,20,0.8)' },
-                        { text: '🎯 收藏领5折券', color: 'rgba(40,140,80,0.85)' },
-                        { text: '📦 集3单返5元', color: 'rgba(40,100,200,0.85)' },
-                      ].map((badge) => (
+                      {menuPromoBadges.map((badge) => (
                         <span key={badge.text} style={{
                           background: badge.color, color: '#fff',
                           fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
@@ -3036,9 +3491,7 @@ export default function XuhuiShopDetailPage({ params }: ShopPageProps) {
                       {shop.owner} 老板亲情推荐
                     </div>
                     <div style={{ fontSize: 12, color: 'rgba(255,200,130,0.85)', lineHeight: 1.6 }}>
-                      「来了就得试试我们的<span style={{ color: '#ffd270', fontWeight: 700 }}>{shop.menu[0]?.name ?? '招牌菜'}</span>，{shop.menu[0]?.desc?.slice(0, 16) ?? '每天必点，强烈推荐'}！
-                      人多聚餐强推<span style={{ color: '#ffd270', fontWeight: 700 }}>{shop.menu[1]?.name ?? '双人套餐'}</span>，现在折扣超划算。
-                      一个人来的别错过<span style={{ color: '#ffd270', fontWeight: 700 }}>{shop.menu[2]?.name ?? '单人套餐'}</span>，超值必点！」
+                      {ownerRecommendation}
                     </div>
                   </div>
                 </div>

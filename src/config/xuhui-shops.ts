@@ -6,6 +6,8 @@ export interface ShopMenuItem {
   price: number;
   /** 优惠价（可选） */
   salePrice?: number;
+  /** 菜单分类标题（可选） */
+  category?: string;
   tag: string;
   desc: string;
   /** 今日可提供份数，0 = 售罄 */
@@ -30,6 +32,19 @@ export interface ShopAction {
 export interface ShopSceneAnchor {
   x: number;
   y: number;
+}
+
+export interface ShopMenuPromoBadge {
+  text: string;
+  color: string;
+}
+
+export interface ShopMenuMeta {
+  title?: string;
+  scoreText?: string;
+  summaryLine?: string;
+  promoBadges?: ShopMenuPromoBadge[];
+  ownerRecommendation?: string;
 }
 
 export interface XuhuiShop {
@@ -62,6 +77,7 @@ export interface XuhuiShop {
   ownerTopics: string[];
   workTasks: string[];
   menu: ShopMenuItem[];
+  menuMeta?: ShopMenuMeta;
   actions: ShopAction[];
   scene: {
     counterLabel: string;
@@ -207,19 +223,50 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     crowdLevel: 'busy',
     openHour: 11,
     closeHour: 21,
-    intro: '带点宴请感的新台州菜，适合家庭聚餐，讲究大菜上桌和分餐节奏。',
+    intro: '洋泾商圈江浙菜销量榜第1的新台州菜馆，评分高、聚餐套餐密度高，适合家庭聚餐、商务宴请和包厢多人局。',
     owner: '锦老板',
     ownerTitle: '店长',
-    ownerGreeting: '今天台州海鲜很鲜，要不要进包间区域看看，顺便接个积分任务？',
+    ownerGreeting: '今天台州海鲜和多人套餐都很顶，要不要先进包厢区看看，顺便研究下哪种买单路径最划算？',
     staffNames: ['阿祺', '小满'],
     guestTopics: ['家庭聚餐点哪些', '海鲜今天新不新鲜', '适合请客的组合'],
     ownerTopics: ['新台州菜的卖点', '包间服务怎么做', '合作后线上怎么承接客流'],
     workTasks: ['摆台和分餐', '传菜到包间', '迎宾带位'],
     menu: [
-      { name: '黄鱼年糕煲', price: 98, tag: '门面菜', desc: '黄鱼鲜味重，年糕吸汁很足。' },
-      { name: '台州糟羹', price: 36, tag: '特色', desc: '咸鲜热羹，适合多人分享。' },
-      { name: '椒盐虾姑', price: 78, tag: '高人气', desc: '壳脆肉嫩，适合下酒和聚餐。' },
+      { name: '桂花酥不腻烤鸭二吃', price: 188, salePrice: 92, category: '🥢 招牌台州热菜', tag: '门店招牌', desc: '招牌硬菜，适合请客上桌，二吃做法有记忆点。', stock: 18, heatScore: 96, ownerPick: true, portion: '2-4人份', stars: 5 },
+      { name: '黄鱼年糕煲', price: 98, category: '🥢 招牌台州热菜', tag: '台州招牌', desc: '黄鱼鲜味浓，年糕吸汁足，是台州菜桌上的稳定选手。', stock: 26, heatScore: 88, portion: '2-3人份', stars: 4 },
+      { name: '椒盐虾姑', price: 78, category: '🥢 招牌台州热菜', tag: '高人气', desc: '外壳酥香、肉质嫩弹，适合聚餐和下酒。', stock: 24, heatScore: 82, portion: '2-3人份', stars: 4 },
+      { name: '台州糟羹', price: 36, category: '🥢 招牌台州热菜', tag: '特色热羹', desc: '咸鲜热羹，适合多人分食，暖场效果很好。', stock: 30, heatScore: 73, portion: '2-4人份', stars: 4 },
+      { name: '锦府小炒套餐', price: 38.8, salePrice: 25.8, category: '🍱 单人工作餐', tag: '新客价', desc: '外卖单人热卖款，新客价直接更低，适合打工人午饭。', stock: 66, heatScore: 97, ownerPick: true, portion: '1人份', stars: 5 },
+      { name: '【锦府8选】随心配单人套餐', price: 40.75, salePrice: 21.75, category: '🍱 单人工作餐', tag: '单人套餐', desc: '8选随心配，覆盖面广，新客入门最划算。', stock: 58, heatScore: 95, portion: '1人份', stars: 5 },
+      { name: '糖醋里脊套餐', price: 30.8, salePrice: 30.8, category: '🍱 单人工作餐', tag: '一口价', desc: '酸甜稳妥，适合想吃家常口味的一人食。', stock: 46, heatScore: 89, portion: '1人份', stars: 4 },
+      { name: '红烧肉套餐', price: 39.5, salePrice: 39.5, category: '🍱 单人工作餐', tag: '下饭王', desc: '红烧肉香浓下饭，工作日点单很稳。', stock: 40, heatScore: 86, portion: '1人份', stars: 4 },
+      { name: '海鲜炒米粉', price: 29.9, salePrice: 18.9, category: '🍱 单人工作餐', tag: '新客爆款', desc: '带海鲜鲜味的单人主食，新客价性价比很高。', stock: 54, heatScore: 93, portion: '1人份', stars: 5 },
+      { name: '锦府园经典双人餐', price: 453, salePrice: 297, category: '👥 堂食聚餐套餐', tag: '双人餐', desc: '双人堂食主推，折扣明显，适合情侣或轻请客。', stock: 20, heatScore: 94, ownerPick: true, portion: '2人份', stars: 5 },
+      { name: '台州经典3人餐', price: 565, salePrice: 397, category: '👥 堂食聚餐套餐', tag: '三人餐', desc: '三人聚餐标配，适合家庭小聚或同事饭局。', stock: 18, heatScore: 90, portion: '3人份', stars: 5 },
+      { name: '锦府园经典四人餐', price: 790, salePrice: 567, category: '👥 堂食聚餐套餐', tag: '四人餐', desc: '四人餐折扣落在主力区间，适合家庭聚餐。', stock: 14, heatScore: 84, portion: '4人份', stars: 4 },
+      { name: '甄选六人餐', price: 1393, salePrice: 999, category: '👥 堂食聚餐套餐', tag: '六人宴请', desc: '适合正式聚餐和小型宴请，价格层级更稳。', stock: 10, heatScore: 81, portion: '6人份', stars: 4 },
+      { name: '甄选八人餐', price: 1776, salePrice: 1273, category: '👥 堂食聚餐套餐', tag: '八人聚餐', desc: '多人局选择充足，适合家庭和朋友大桌。', stock: 8, heatScore: 77, portion: '8人份', stars: 4 },
+      { name: '精选十人包厢套餐', price: 2914, salePrice: 2338, category: '👥 堂食聚餐套餐', tag: '包厢套餐', desc: '包厢专属大桌方案，适合商务宴请和重要场合。', stock: 5, heatScore: 75, portion: '10人份·包厢', stars: 5 },
+      { name: '超值午市十人餐（包厢可用）', price: 1969, salePrice: 1568, category: '👥 堂食聚餐套餐', tag: '午市特惠', desc: '午市价更友好，10人局预算更容易控住。', stock: 6, heatScore: 72, portion: '10人份·包厢可用', stars: 4 },
+      { name: '100元代金券（7.9折）', price: 100, salePrice: 79, category: '🎟 囤券优惠', tag: '代金券', desc: '堂食通用券，适合已经确定到店吃饭的人先囤。', stock: 99, heatScore: 98, portion: '堂食通用券', stars: 5 },
+      { name: '100元代金券（9.5折）', price: 100, salePrice: 95, category: '🎟 囤券优惠', tag: '补差兜底', desc: '折扣较轻，适合做补充券或低门槛下单。', stock: 99, heatScore: 62, portion: '堂食通用券', stars: 3 },
+      { name: '牛肉焖饭宝宝餐', price: 58, salePrice: 19.9, category: '🍵 特惠单品与饮品', tag: '宝宝餐', desc: '儿童友好型单品，堂食补位很好用。', stock: 22, heatScore: 68, portion: '1人份', stars: 4 },
+      { name: '杂粮黑米汁', price: 16, salePrice: 12, category: '🍵 特惠单品与饮品', tag: '饮品特惠', desc: '谷物感明显，适合搭配重口热菜。', stock: 36, heatScore: 58, portion: '1扎/份', stars: 3 },
     ],
+    menuMeta: {
+      title: '锦府园·新台州菜（LCM置汇旭辉广场店）',
+      scoreText: '⭐ 4.8 · 11861条评价',
+      summaryLine: '📍 LCM置汇旭辉广场 · 🕙 10:30-14:00 / 16:30-21:00 · 👥 人均¥147 · 💤 当前休息中',
+      promoBadges: [
+        { text: '🥢 新台州菜', color: 'rgba(255,118,51,0.88)' },
+        { text: '👥 多人套餐很全', color: 'rgba(220,86,40,0.84)' },
+        { text: '🎟 代金券7.9折起', color: 'rgba(190,100,24,0.82)' },
+        { text: '🚚 外卖新客价', color: 'rgba(46,132,86,0.88)' },
+        { text: '🏢 包厢可订', color: 'rgba(42,103,184,0.86)' },
+        { text: '📞 可电话预定', color: 'rgba(122,88,198,0.82)' },
+      ],
+      ownerRecommendation: '「请客就先看桂花酥不腻烤鸭二吃，门面撑得住；两三个人堂食直接上经典套餐更省心；一个人想吃得划算，外卖新客价和单人套餐最合适。」',
+    },
     actions: [
       { id: 'work', title: '进店打工', subtitle: '迎宾分餐局', description: '做迎宾和分餐支持，适合体验高客单门店节奏。' },
       { id: 'menu', title: '看菜单', subtitle: '聚餐点单逻辑', description: '按请客、家庭、商务场景看怎么配菜。' },

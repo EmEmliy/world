@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { GAME_CONFIG } from '@/config/game';
 import { PageTracker } from '@/components/game/page-tracker';
+import { playAudioFile } from '@/lib/sound';
 
 export default function LandingPage() {
   return (
@@ -23,7 +24,8 @@ export default function LandingPage() {
 
       <div className="animate-slide-up" style={{ animationDelay: '0.5s', animationFillMode: 'backwards' }}>
         <Link
-          href="/island"
+          href="/xuhui-island"
+          onClick={() => playAudioFile('/banner.mp3', 0.6)}
           className="inline-block bg-primary hover:bg-primary-dark text-white text-lg font-bold px-10 py-4 rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300"
         >
           {GAME_CONFIG.cta} →

@@ -33,6 +33,16 @@ export function playSound(type: 'click' | 'success' | 'notification') {
   }
 }
 
+/** 播放 public/ 下的音频文件，路径如 '/longpaopao.mp3' */
+export function playAudioFile(src: string, volume = 0.8) {
+  if (typeof window === 'undefined') return;
+  try {
+    const audio = new Audio(src);
+    audio.volume = volume;
+    void audio.play();
+  } catch { /* ignore */ }
+}
+
 export function toggleSound(enabled: boolean) {
   if (typeof window !== 'undefined') {
     localStorage.setItem('soundEnabled', String(enabled));
