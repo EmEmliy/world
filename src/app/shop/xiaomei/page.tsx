@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { NPC_CONFIG, QUEST_CONFIG, MENU } from '@/config/game';
 import { track } from '@/lib/tracker';
+import { getChatApiUrl } from '@/lib/chat-api';
 import { CrayfishAvatar, getCrayfishVariant } from '@/components/game/crayfish-avatar';
 import { QuestProgress } from '@/components/game/quest-progress';
 import { RewardModal } from '@/components/game/reward-modal';
@@ -37,7 +38,7 @@ export default function ShopPage() {
     const messagesToSend = [...messages, { role: 'user', content: userMessage }];
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(getChatApiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { playAudioFile } from '@/lib/sound';
+import { getChatApiUrl } from '@/lib/chat-api';
 import {
   type ShopActionId,
   type ShopMenuItem,
@@ -996,7 +997,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
     });
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(getChatApiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, systemPrompt }),
