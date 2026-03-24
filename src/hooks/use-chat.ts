@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { getChatApiUrl } from '@/lib/chat-api';
 
 export interface Message {
   id: string;
@@ -13,6 +14,13 @@ export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const chatApiUrl = getChatApiUrl();
+  // 用 ref 保持最新 messages 引用，避免 sendMessage 的陈旧闭包问题
+  const messagesRef = useRef<Message[]>(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const sendMessage = useCallback(async (content: string) => {
     const userMessage: Message = {
@@ -22,17 +30,25 @@ export function useChat() {
       timestamp: Date.now(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    // 先更新 ref，再 setMessages，确保后续读取时已是最新值
+    const latestMessages = messagesRef.current;
+    messagesRef.current = [...latestMessages, userMessage];
+    setMessages(messagesRef.current);
     setIsLoading(true);
 
+    // 取消上一个未完成的请求
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
     abortRef.current = new AbortController();
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(chatApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMessage].map(m => ({
+          // 使用 ref 里的最新 messages，避免闭包读到旧快照
+          messages: messagesRef.current.map(m => ({
             role: m.role,
             content: m.content,
           })),
@@ -41,61 +57,73 @@ export function useChat() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to send message');
+        throw new Error(`Failed to send message: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No reader');
 
       const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `${Date.now() + 1}`,
         role: 'assistant',
         content: '',
         timestamp: Date.now(),
       };
 
-      setMessages(prev => [...prev, assistantMessage]);
+      messagesRef.current = [...messagesRef.current, assistantMessage];
+      setMessages(messagesRef.current);
 
       const decoder = new TextDecoder();
-      
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
-        const chunk = decoder.decode(value);
+
+        const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
-        
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             if (data === '[DONE]') continue;
-            
+
             try {
               const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content || '';
-              if (content) {
-                setMessages(prev => 
-                  prev.map(m => 
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                setMessages(prev =>
+                  prev.map(m =>
                     m.id === assistantMessage.id
-                      ? { ...m, content: m.content + content }
+                      ? { ...m, content: m.content + delta }
                       : m
                   )
                 );
               }
-            } catch {}
+            } catch {
+              // 忽略无效的 SSE 数据帧
+            }
           }
         }
       }
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        // 用户主动取消，不报错
+        return;
+      }
       console.error('Chat error:', e);
     } finally {
       setIsLoading(false);
       abortRef.current = null;
     }
-  }, [messages]);
+  }, [chatApiUrl]); // 消息状态通过 ref 读取，接口地址变化时重新绑定 sendMessage
 
   const clearMessages = useCallback(() => {
+    messagesRef.current = [];
     setMessages([]);
+  }, []);
+
+  const stopGenerating = useCallback(() => {
+    abortRef.current?.abort();
   }, []);
 
   return {
@@ -103,5 +131,6 @@ export function useChat() {
     isLoading,
     sendMessage,
     clearMessages,
+    stopGenerating,
   };
 }

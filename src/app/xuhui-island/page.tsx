@@ -1,577 +1,281 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { CSSProperties, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import type { CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PageTracker } from '@/components/game/page-tracker';
+import { LobsterDispatchMenu } from '@/components/game/lobster-dispatch-menu';
+import { getItem, setItem } from '@/lib/storage';
+import {
+  DEFAULT_TRACE_STATE,
+  PAW_PRINT_THRESHOLD,
+  TREE_STREAK_THRESHOLD,
+  getUnlockedPawPrintShopIds,
+  recordIslandVisit,
+  recordShopVisit,
+  saveMemorialStone,
+  saveShopRecommendation,
+  type TraceState,
+} from '@/lib/traces';
 import { track } from '@/lib/tracker';
-import { playAudioFile } from '@/lib/sound';
+import { shareImageCard } from '@/lib/share';
+import { playAudioFile, disposeAudioContext, playPortalSound } from '@/lib/sound';
 import { XUHUI_SHOPS, type XuhuiShop } from '@/config/xuhui-shops';
+import { PortalEffect } from './_components/portal-effect';
+import { AgentStatusCard } from './_components/agent-status-card';
+import { OnboardingJourney, type FirstDayAnswers } from './_components/onboarding-journey';
+import { FirstDayStoryCard } from './_components/first-day-story-card';
+import { TraceOverlays } from './_components/trace-overlays';
+import {
+  // 常量
+  LEAD_LOBSTER_ID,
+  LOBSTER_WAIT_SPOTS,
+  CONSTRUCTION_SITES,
+  DEFAULT_BOARD_SIZE,
+  SPEAK_DURATION_MS,
+  REST_DURATION_MS,
+  // 类型
+  type LobsterWalker,
+  type ShopMetric,
+  type BoardSize,
+  // 工具函数
+  clamp,
+  hashShopId,
+  computeHourlyRating,
+  createShopMetrics,
+  getVisualDestinationKey,
+  getTimePeriod,
+  choosePersonalityDestination,
+  getRandomInsideDuration,
+  getRandomBubbleLine,
+  findDestinationSlot,
+  getLobsterTravelDuration,
+  toDestinationPoint,
+  createInitialLobsters,
+  renderStars,
+  type LobsterTimePeriod,
+} from './_lib/game-logic';
+import {
+  pageStyle,
+  mapShellStyle,
+  mapBoardStyle,
+  badgeStyle,
+  metricGlassStyle,
+} from './_lib/styles';
 
-interface LobsterWalker {
-  id: string;
-  name: string;
-  variant: string;
-  x: number;
-  y: number;
-  destinationSlot: number;
-  mode: 'traveling' | 'inside' | 'resting' | 'speaking';
-  destination: { kind: 'shop'; id: string } | { kind: 'spot'; id: string };
-  currentShopId?: string;
-  nextActionAt: number;
-  scale: number;
-  opacity: number;
-  bubbleText?: string;
-  bubbleKey: number;
-  isDispatched?: boolean; // 用户手动派遣的，3倍速行走
-  isDispatching?: boolean; // 瞬移中，transition 关闭
-  dispatchTarget?: { x: number; y: number }; // 最终目标坐标
+const FIRST_DAY_STORAGE_KEY = 'xuhui_island_first_day_v1';
+const FIRST_DAY_OPENING_MS = 2200;
+const FIRST_DAY_REPORT_DELAY_MS = 45_000;
+
+type JourneyPhase = 'hidden' | 'opening' | 'intro' | 'questions' | 'report';
+type FirstDayDebugMode = Exclude<JourneyPhase, 'hidden'> | null;
+
+interface FirstDayState extends FirstDayAnswers {
+  activatedAt: number;
+  firstShopId: string;
+  reportReadyAt: number;
+  reportViewedAt?: number;
 }
 
-interface ShopMetric {
-  visitorCount: number;
-  welfareLeft: number;
-  rating: number;
-  motionTick: number;
-}
-
-interface BoardSize {
-  width: number;
-  height: number;
-}
-
-const LOBSTER_VARIANTS = [
-  '/crayfish-gif/base.gif',
-  '/crayfish-gif/glasses.gif',
-  '/crayfish-gif/hat.gif',
-  '/crayfish-gif/mask.gif',
-  '/crayfish-gif/apron.gif',
-  '/crayfish-gif/guest-bag.gif',
-  '/crayfish-gif/guest-chopsticks.gif',
-  '/crayfish-gif/guest-dancing.gif',
-  '/crayfish-gif/guest-sitting.gif',
-  '/crayfish-gif/guest-tea.gif',
-  '/crayfish-gif/guest-thumbsup.gif',
-];
-
-const LOBSTER_NAMES = ['不饿', '饭团', '来福', '阿满', '小馋', '旺财', '冲冲', '糯糯', '大饱', '卷卷', '圆宝'];
-const LOBSTER_CHAT_LINES = [
-  '吃饱了！',
-  '再来一碗！',
-  '去那家看看！',
-  '休息一下~',
-  '这家真香',
-  '桥边等会儿',
-  '山坡吹吹风',
-  '下顿吃什么？',
-];
-const LOBSTER_WAIT_SPOTS = [
-  { id: 'bridge', label: '桥边等位', x: 60, y: 71 },
-  { id: 'hill', label: '山坡打卡', x: 42, y: 37 },
-  { id: 'pier', label: '码头闲逛', x: 12, y: 63 },
-  { id: 'shore', label: '海边发呆', x: 79, y: 82 },
-  { id: 'grove', label: '椰林散步', x: 27, y: 24 },
-  { id: 'river', label: '河道吹风', x: 52, y: 52 },
-];
-const CONSTRUCTION_SITES = [
-  { id: 'construction-1', x: 18, y: 83, offsetX: 12, offsetY: -6 },
-  { id: 'construction-2', x: 61.5, y: 83.5, offsetX: -8, offsetY: -6 },
-  { id: 'construction-3', x: 86, y: 79, offsetX: -26, offsetY: -8 },
-];
-const SHOP_QUEUE_OFFSETS = [
-  { x: 0, y: 0 },
-  { x: -2.2, y: 1.5 },
-  { x: 2.3, y: 1.7 },
-  { x: -3.3, y: -1.2 },
-  { x: 3.2, y: -1.1 },
-];
-const SPOT_OFFSETS = [
-  { x: 0, y: 0 },
-  { x: -2.8, y: 1.5 },
-  { x: 2.6, y: 1.4 },
-  { x: -1.8, y: -1.8 },
-  { x: 1.9, y: -1.9 },
-  { x: 4.1, y: 0.6 },
-];
-const DEFAULT_BOARD_SIZE: BoardSize = { width: 1420, height: 923 };
-const TRAVEL_DURATION_MS = 14500;
-const TRAVEL_DURATION_FAST_MS = Math.round(TRAVEL_DURATION_MS / 3); // 派遣龙虾3倍速
-const SPEAK_DURATION_MS = 3600;
-const REST_DURATION_MS = 6800;
-
-const hashShopId = (shopId: string) =>
-  Array.from(shopId).reduce((total, char) => total + char.charCodeAt(0), 0);
-
-const SHOP_ICONS: Record<string, string> = {
-  gaga: '🍰',
-  azhong: '🥟',
-  laotouer: '🦐',
-  jiangbian: '🐟',
-  wanglaida: '🐸',
-  niunew: '🥩',
-  cailan: '🥢',
-  jinfuyuan: '🏮',
+const DEBUG_FIRST_DAY_ANSWERS: FirstDayAnswers = {
+  taste: '热乎海鲜',
+  vibe: '慢慢逛逛',
+  mood: '想找惊喜',
 };
 
-const computeHourlyRating = (shop: XuhuiShop, hour: number) => {
-  const offset = ((hashShopId(shop.id) + hour) % 4) * 0.08;
-  const crowdBoost = shop.crowdLevel === 'packed' ? 0.22 : shop.crowdLevel === 'busy' ? 0.14 : 0.06;
-  return Math.min(5, Number((4.55 + crowdBoost + offset).toFixed(1)));
-};
+function parseFirstDayDebugMode(value: string | null): FirstDayDebugMode {
+  if (value === 'opening' || value === 'intro' || value === 'questions' || value === 'report') {
+    return value;
+  }
+  return null;
+}
 
-const createShopMetrics = () =>
-  Object.fromEntries(
-    XUHUI_SHOPS.map((shop) => [
-      shop.id,
-      {
-        visitorCount: shop.baseVisitors,
-        welfareLeft: 42 + (hashShopId(shop.id) % 24),
-        rating: computeHourlyRating(shop, 12), // 固定初始值，避免 SSR/CSR 时间不同导致 Hydration mismatch
-        motionTick: 0,
-      },
-    ])
-  ) as Record<string, ShopMetric>;
+function createDebugFirstDayState(): FirstDayState {
+  return {
+    ...DEBUG_FIRST_DAY_ANSWERS,
+    activatedAt: Date.now() - 60_000,
+    firstShopId: chooseFirstDayShop(DEBUG_FIRST_DAY_ANSWERS),
+    reportReadyAt: Date.now() - 1,
+  };
+}
 
-const getDestinationKey = (destination: LobsterWalker['destination']) => `${destination.kind}:${destination.id}`;
+interface MapFeedbackEffect {
+  id: number;
+  tone: 'shop' | 'stone';
+  title: string;
+  subtitle?: string;
+  detail: string;
+  left: string;
+  top: string;
+}
 
-const toShopAnchorPoint = (shop: XuhuiShop) => {
-  const width = DEFAULT_BOARD_SIZE.width;
-  const height = DEFAULT_BOARD_SIZE.height;
+const FIRST_DAY_CHOICE_GROUPS: Array<{
+  key: keyof FirstDayAnswers;
+  title: string;
+  subtitle: string;
+  options: string[];
+}> = [
+  {
+    key: 'taste',
+    title: '今天更想吃哪一口？',
+    subtitle: '旺财会拿这个判断第一站先往哪儿跑',
+    options: ['热乎海鲜', '扎实主食', '甜口轻食'],
+  },
+  {
+    key: 'vibe',
+    title: '你想把今晚交给什么气氛？',
+    subtitle: '热闹、安静，还是只是慢慢逛',
+    options: ['热闹一点', '安静一点', '慢慢逛逛'],
+  },
+  {
+    key: 'mood',
+    title: '你今天想被怎么对待？',
+    subtitle: '让旺财知道今天该怎么陪你',
+    options: ['想被照顾', '想找惊喜', '只想散散心'],
+  },
+];
+
+function chooseFirstDayShop(answers: FirstDayAnswers) {
+  if (answers.taste === '甜口轻食') return 'gaga';
+  if (answers.taste === '热乎海鲜') return 'jiangbian';
+  if (answers.vibe === '安静一点') return 'jinfuyuan';
+  return 'azhong';
+}
+
+function getTimeLabel(hour = new Date().getHours()) {
+  if (hour >= 6 && hour < 10) return '清晨落岛';
+  if (hour >= 10 && hour < 15) return '午间巡岛';
+  if (hour >= 15 && hour < 19) return '傍晚看海';
+  return '深夜亮灯';
+}
+
+function buildFirstDayReport(state: FirstDayState) {
+  const firstShop = XUHUI_SHOPS.find((shop) => shop.id === state.firstShopId);
+  const shopName = firstShop?.name ?? '岛上的第一家店';
+
+  const openingLine =
+    state.vibe === '安静一点'
+      ? `我先替你去了一趟${shopName}，没敢太吵。`
+      : `我先替你去了一趟${shopName}，一路上都在想你会不会喜欢。`;
+
+  const summaryLine =
+    state.mood === '想找惊喜'
+      ? `你说自己今天想找点惊喜，所以我特意绕了远一点。你喜欢${state.taste}，也想要${state.vibe}的气氛，我就在门口多站了一会儿，把今天最像你的那一口先记下来了。`
+      : state.mood === '只想散散心'
+        ? `你说今天只想散散心，我就没替你催任何决定。你喜欢${state.taste}，想要${state.vibe}的气氛，所以我先替你把这家店的灯光、味道和门口的风都看了一遍。`
+        : `你说今天想被照顾一下，所以我先替你走了一趟最像样的第一站。你喜欢${state.taste}，想要${state.vibe}的气氛，我就先去把这份安心替你端回来了。`;
 
   return {
-    x: clamp(shop.x + ((shop.mapOffsetX ?? 0) / width) * 100, 8, 92),
-    y: clamp(shop.y + (((shop.mapOffsetY ?? 0) + 34) / height) * 100, 10, 95),
+    shopName,
+    openingLine,
+    summaryLine,
+    closingLine: '明天还来吗？我会继续在这里等你。',
+    timeLabel: getTimeLabel(),
+    shopImage: firstShop?.image,
   };
+}
+
+interface TimeMoodConfig {
+  label: string;
+  subtitle: string;
+  chip: string;
+  mapFilter: string;
+  glow: string;
+  overlay: CSSProperties;
+  haze: CSSProperties;
+}
+
+const TIME_MOOD_CONFIG: Record<LobsterTimePeriod, TimeMoodConfig> = {
+  morning: {
+    label: '清晨 6:00-9:59',
+    subtitle: '薄雾刚散，岛先醒了。',
+    chip: '☁️ 冷白晨光',
+    mapFilter: 'brightness(0.88) hue-rotate(-8deg)',
+    glow: '0 0 40px rgba(214, 242, 255, 0.24)',
+    overlay: {
+      background:
+        'linear-gradient(180deg, rgba(222,239,255,0.34) 0%, rgba(194,226,255,0.14) 42%, rgba(77,119,150,0.12) 100%)',
+      mixBlendMode: 'screen',
+      opacity: 0.82,
+    },
+    haze: {
+      background:
+        'radial-gradient(circle at 28% 18%, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.08) 32%, transparent 58%), linear-gradient(180deg, rgba(226,240,255,0.16) 0%, transparent 55%)',
+      opacity: 0.86,
+    },
+  },
+  midday: {
+    label: '午间 10:00-14:59',
+    subtitle: '太阳正高，整座岛都在营业。',
+    chip: '☀️ 暖阳满岛',
+    mapFilter: 'none',
+    glow: '0 0 36px rgba(255, 210, 140, 0.18)',
+    overlay: {
+      background:
+        'linear-gradient(180deg, rgba(255,243,214,0.18) 0%, rgba(255,215,152,0.08) 46%, rgba(126,188,198,0.04) 100%)',
+      mixBlendMode: 'screen',
+      opacity: 0.88,
+    },
+    haze: {
+      background:
+        'radial-gradient(circle at 20% 12%, rgba(255,248,224,0.18) 0%, transparent 34%), radial-gradient(circle at 82% 20%, rgba(255,236,186,0.12) 0%, transparent 28%)',
+      opacity: 0.68,
+    },
+  },
+  sunset: {
+    label: '傍晚 15:00-18:59',
+    subtitle: '橙金压下来，大家会往海边靠。',
+    chip: '🌇 橙金夕照',
+    mapFilter: 'hue-rotate(15deg) saturate(1.2)',
+    glow: '0 0 46px rgba(255, 176, 88, 0.28)',
+    overlay: {
+      background:
+        'linear-gradient(180deg, rgba(255,211,166,0.22) 0%, rgba(255,170,76,0.18) 46%, rgba(173,96,38,0.16) 100%)',
+      mixBlendMode: 'screen',
+      opacity: 0.92,
+    },
+    haze: {
+      background:
+        'radial-gradient(circle at 70% 20%, rgba(255,192,118,0.24) 0%, rgba(255,155,74,0.08) 26%, transparent 52%), linear-gradient(180deg, transparent 0%, rgba(120,62,22,0.16) 100%)',
+      opacity: 0.84,
+    },
+  },
+  night: {
+    label: '深夜 19:00+',
+    subtitle: '灯光落下去，码头开始发亮。',
+    chip: '🌌 星空暗调',
+    mapFilter: 'none',
+    glow: '0 0 32px rgba(109, 164, 255, 0.12)',
+    overlay: {
+      background: 'transparent',
+      mixBlendMode: 'normal',
+      opacity: 0,
+    },
+    haze: {
+      background:
+        'radial-gradient(circle at 18% 16%, rgba(184,220,255,0.08) 0%, transparent 24%), radial-gradient(circle at 82% 14%, rgba(162,200,255,0.06) 0%, transparent 20%)',
+      opacity: 0.38,
+    },
+  },
 };
 
-const findShopById = (shopId: string) => XUHUI_SHOPS.find((shop) => shop.id === shopId);
-const findSpotById = (spotId: string) => LOBSTER_WAIT_SPOTS.find((spot) => spot.id === spotId);
+const QUICK_RECOMMENDATION_LINES = [
+  '今晚风大，但这一口值得等。',
+  '这里的灯一亮起来，就想坐久一点。',
+  '我下次还会来，想带朋友一起。',
+];
 
-const getVisualDestinationKey = (lobster: LobsterWalker) => {
-  if (lobster.mode === 'inside' && lobster.currentShopId) return `shop:${lobster.currentShopId}`;
-  return `${lobster.destination.kind}:${lobster.destination.id}`;
-};
-
-const chooseSpreadDestination = (
-  lobsters: LobsterWalker[],
-  kind: 'shop' | 'spot',
-  excludeId?: string
-) => {
-  const counts = new Map<string, number>();
-  for (const lobster of lobsters) {
-    const [destinationKind, destinationId] = getVisualDestinationKey(lobster).split(':');
-    if (destinationKind !== kind || !destinationId || destinationId === excludeId) continue;
-    counts.set(destinationId, (counts.get(destinationId) ?? 0) + 1);
-  }
-
-  const pool = kind === 'shop' ? XUHUI_SHOPS : LOBSTER_WAIT_SPOTS;
-  const candidates = pool.filter((item) => item.id !== excludeId);
-  const minCount = candidates.reduce((min, item) => Math.min(min, counts.get(item.id) ?? 0), Number.POSITIVE_INFINITY);
-  const quietCandidates = candidates.filter((item) => (counts.get(item.id) ?? 0) === minCount);
-  const picked = quietCandidates[Math.floor(Math.random() * quietCandidates.length)] ?? candidates[0] ?? pool[0];
-
-  return { kind, id: picked.id } as const;
-};
-
-const getRandomInsideDuration = () => 5200 + Math.floor(Math.random() * 3600);
-const getRandomBubbleLine = () =>
-  LOBSTER_CHAT_LINES[Math.floor(Math.random() * LOBSTER_CHAT_LINES.length)] ?? LOBSTER_CHAT_LINES[0];
-
-const findDestinationSlot = (
-  lobsters: LobsterWalker[],
-  destination: LobsterWalker['destination'],
-  excludeId?: string
-) => {
-  const slotPool = destination.kind === 'shop' ? SHOP_QUEUE_OFFSETS : SPOT_OFFSETS;
-  const destinationKey = getDestinationKey(destination);
-  const usage = new Array(slotPool.length).fill(0);
-
-  for (const lobster of lobsters) {
-    if (lobster.id === excludeId) continue;
-    if (getVisualDestinationKey(lobster) !== destinationKey) continue;
-    usage[lobster.destinationSlot % slotPool.length] += 1;
-  }
-
-  const minimumUsage = Math.min(...usage);
-  const candidateSlots = usage
-    .map((count, index) => ({ count, index }))
-    .filter((item) => item.count === minimumUsage);
-
-  return candidateSlots[Math.floor(Math.random() * candidateSlots.length)]?.index ?? 0;
-};
-
-const toDestinationPoint = (destination: LobsterWalker['destination'], destinationSlot = 0) => {
-  const offsets = destination.kind === 'shop' ? SHOP_QUEUE_OFFSETS : SPOT_OFFSETS;
-  const slotOffset = offsets[destinationSlot % offsets.length] ?? offsets[0];
-
-  if (destination.kind === 'shop') {
-    const shop = findShopById(destination.id) ?? XUHUI_SHOPS[0];
-    const anchor = toShopAnchorPoint(shop);
-    return {
-      x: clamp(anchor.x + slotOffset.x, 8, 92),
-      y: clamp(anchor.y + slotOffset.y, 10, 95),
-    };
-  }
-
-  const spot = findSpotById(destination.id) ?? LOBSTER_WAIT_SPOTS[0];
+function getShopFeedbackPosition(shop: XuhuiShop) {
   return {
-    x: clamp(spot.x + slotOffset.x, 8, 92),
-    y: clamp(spot.y + slotOffset.y, 10, 95),
+    left: `calc(${shop.x}% + ${(shop.mapOffsetX ?? 0) + 26}px)`,
+    top: `calc(${shop.y}% + ${(shop.mapOffsetY ?? 0) - 118}px)`,
   };
-};
-
-const createInitialLobsters = (): LobsterWalker[] => {
-  const initialDestinations = [
-    ...XUHUI_SHOPS.map((shop) => ({ kind: 'shop' as const, id: shop.id })),
-    ...LOBSTER_WAIT_SPOTS.map((spot) => ({ kind: 'spot' as const, id: spot.id })),
-  ];
-
-  return Array.from({ length: LOBSTER_VARIANTS.length }, (_, index): LobsterWalker => {
-    const now = Date.now();
-    const destination = initialDestinations[index % initialDestinations.length] ?? {
-      kind: 'spot' as const,
-      id: LOBSTER_WAIT_SPOTS[0]!.id,
-    };
-    const isSpotStart = destination.kind === 'spot';
-
-    return {
-      id: `lobster-${index}`,
-      name: LOBSTER_NAMES[index % LOBSTER_NAMES.length],
-      variant: LOBSTER_VARIANTS[index % LOBSTER_VARIANTS.length],
-      x: 0,
-      y: 0,
-      destinationSlot: 0,
-      mode: isSpotStart ? 'resting' : 'traveling',
-      destination,
-      currentShopId: undefined,
-      nextActionAt: now + 1400 + index * 1300,
-      scale: 1,
-      opacity: 1,
-      bubbleText: undefined,
-      bubbleKey: 0,
-    };
-  }).reduce<LobsterWalker[]>((lobsters, lobster) => {
-    const destinationSlot = findDestinationSlot(lobsters, lobster.destination, lobster.id);
-    const point = toDestinationPoint(lobster.destination, destinationSlot);
-
-    lobsters.push({
-      ...lobster,
-      x: point.x,
-      y: point.y,
-      destinationSlot,
-    });
-
-    return lobsters;
-  }, []);
-};
-
-const pageStyle: CSSProperties = {
-  minHeight: '100vh',
-  padding: '16px 10px 30px',
-  background: 'linear-gradient(180deg, #0a2a3a 0%, #0d3d52 20%, #0f5068 45%, #0d6878 65%, #0b7a7a 80%, #0a8a72 100%)',
-  color: '#e0f4f0',
-  position: 'relative',
-  overflow: 'hidden',
-};
-
-const heroStyle: CSSProperties = {
-  maxWidth: 1420,
-  margin: '0 auto 18px',
-  padding: 24,
-  borderRadius: 28,
-  background: 'rgba(8, 30, 45, 0.72)',
-  border: '1px solid rgba(100, 220, 200, 0.22)',
-  boxShadow: '0 24px 80px rgba(0,30,60,0.35)',
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-};
-
-const statsRowStyle: CSSProperties = {
-  display: 'flex',
-  gap: 12,
-  flexWrap: 'wrap',
-  marginTop: 18,
-  position: 'relative',
-  zIndex: 2,
-};
-
-const statCardStyle: CSSProperties = {
-  flex: '1 1 180px',
-  minWidth: 180,
-  padding: '14px 16px',
-  borderRadius: 20,
-  background: 'rgba(8, 40, 55, 0.68)',
-  border: '1px solid rgba(100,220,200,0.18)',
-  boxShadow: '0 10px 24px rgba(0,20,40,0.3)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
-  textAlign: 'center',
-  color: '#c0eee8',
-};
-
-const mapShellStyle: CSSProperties = {
-  maxWidth: 1420,
-  margin: '0 auto',
-  padding: 10,
-  borderRadius: 30,
-  background: 'rgba(5, 25, 40, 0.55)',
-  border: '2px solid rgba(80, 200, 180, 0.28)',
-  boxShadow: '0 28px 100px rgba(0,20,50,0.5), 0 0 60px rgba(30,160,140,0.12)',
-  position: 'relative', // 为派遣面板提供定位上下文
-};
-
-const mapBoardStyle: CSSProperties = {
-  position: 'relative',
-  width: '100%',
-  aspectRatio: '16 / 10.4',
-  overflow: 'hidden',
-  borderRadius: 24,
-  border: '4px solid #fff0d0',
-  background: 'linear-gradient(180deg, #7ec8d4 0%, #49b8cb 100%)',
-  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85)',
-};
-
-const badgeStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '6px 12px',
-  borderRadius: 999,
-  background: '#fff0d4',
-  color: '#d36d2e',
-  fontSize: 12,
-  fontWeight: 800,
-  letterSpacing: '0.16em',
-};
-
-const darkGlassStyle: CSSProperties = {
-  background: 'rgba(0, 0, 0, 0.05)',
-  border: '1px solid rgba(255,255,255,0.16)',
-  backdropFilter: 'blur(14px)',
-  WebkitBackdropFilter: 'blur(14px)',
-  boxShadow: '0 12px 22px rgba(70,42,26,0.18)',
-};
-
-const metricGlassStyle: CSSProperties = {
-  minWidth: 164,
-  padding: '10px 14px',
-  borderRadius: 20,
-  background: 'rgba(6, 28, 44, 0.88)',
-  border: '1px solid rgba(100,220,200,0.28)',
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 34px rgba(0,20,50,0.4), 0 0 20px rgba(50,180,160,0.12)',
-  color: '#d0f0ea',
-};
-
-const renderStars = (rating: number) => '⭐️'.repeat(Math.max(4, Math.round(rating)));
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-/** Web Audio 传送音效：咻的一声，从高频扫到低频 + 低频 boom */
-function playPortalSound() {
-  try {
-    const ctx = new AudioContext();
-    const now = ctx.currentTime;
-
-    // 主音：从高频扫到低频（"咻"）
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(1600, now);
-    osc1.frequency.exponentialRampToValueAtTime(220, now + 0.35);
-    gain1.gain.setValueAtTime(0, now);
-    gain1.gain.linearRampToValueAtTime(0.28, now + 0.04);
-    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
-    osc1.start(now);
-    osc1.stop(now + 0.5);
-
-    // 次音：共鸣泡泡感
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.type = 'triangle';
-    osc2.frequency.setValueAtTime(880, now + 0.05);
-    osc2.frequency.exponentialRampToValueAtTime(440, now + 0.4);
-    gain2.gain.setValueAtTime(0, now + 0.05);
-    gain2.gain.linearRampToValueAtTime(0.12, now + 0.12);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
-    osc2.start(now + 0.05);
-    osc2.stop(now + 0.5);
-
-    // 出现感：低频 boom
-    const osc3 = ctx.createOscillator();
-    const gain3 = ctx.createGain();
-    osc3.connect(gain3);
-    gain3.connect(ctx.destination);
-    osc3.type = 'sine';
-    osc3.frequency.setValueAtTime(120, now);
-    osc3.frequency.exponentialRampToValueAtTime(60, now + 0.18);
-    gain3.gain.setValueAtTime(0.22, now);
-    gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc3.start(now);
-    osc3.stop(now + 0.25);
-
-    window.setTimeout(() => void ctx.close(), 800);
-  } catch { /* ignore */ }
 }
 
-function LobsterDispatchMenu({
-  lobster,
-  shops,
-  spots,
-  onClose,
-  onDispatchShop,
-  onDispatchSpot,
-}: {
-  lobster: LobsterWalker;
-  shops: typeof XUHUI_SHOPS;
-  spots: typeof LOBSTER_WAIT_SPOTS;
-  onClose: () => void;
-  onDispatchShop: (shopId: string) => void;
-  onDispatchSpot: (spotId: string) => void;
-}) {
-  return (
-    <div
-      className="pointer-events-auto animate-[menu-pop_420ms_cubic-bezier(0.22,1,0.36,1)]"
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 50,
-      }}
-    >
-      <div
-        style={{
-          background: 'rgba(30, 15, 5, 0.52)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          borderTop: '1px solid rgba(255,200,120,0.22)',
-          padding: '10px 12px 10px',
-          display: 'flex',
-          gap: 14,
-          alignItems: 'stretch',
-        }}
-      >
-        {/* 左侧：被选中的龙虾大展示框 */}
-        <div
-          style={{
-            flexShrink: 0,
-            width: 160,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            background: 'rgba(255,200,100,0.10)',
-            border: '1.5px solid rgba(255,200,100,0.36)',
-            borderRadius: 18,
-            padding: '10px 8px 8px',
-            position: 'relative',
-          }}
-        >
-          {/* 取消按钮悬浮在右上角 */}
-          <button
-            type="button"
-            onClick={() => { playAudioFile('/usual.mp3', 0.5); onClose(); }}
-            style={{
-              position: 'absolute',
-              top: 6,
-              right: 6,
-              width: 22,
-              height: 22,
-              borderRadius: '50%',
-              border: '1px solid rgba(255,200,100,0.35)',
-              background: 'rgba(255,200,100,0.12)',
-              color: 'rgba(255,220,160,0.7)',
-              fontSize: 11,
-              fontWeight: 900,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              lineHeight: 1,
-            }}
-          >
-            ✕
-          </button>
-          <img
-            src={lobster.variant}
-            alt={lobster.name}
-            draggable={false}
-            style={{ width: 110, height: 110, objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(255,160,60,0.55))' }}
-          />
-          <span style={{ fontSize: 16, fontWeight: 900, color: '#ffe97a', textShadow: '0 1px 4px rgba(0,0,0,0.6)', whiteSpace: 'nowrap' }}>
-            {lobster.name}
-          </span>
-          <span style={{ fontSize: 11, color: 'rgba(255,220,140,0.6)', fontWeight: 700 }}>⚡ 3倍速冲过去</span>
-        </div>
-
-        {/* 右侧：按钮区居中 wrap */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 10, fontWeight: 900, color: 'rgba(255,200,100,0.55)', letterSpacing: '0.18em', textTransform: 'uppercase' }}>去餐厅</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, justifyContent: 'center' }}>
-            {shops.map((shop) => (
-              <DispatchBtn
-                key={`${lobster.id}-${shop.id}`}
-                icon={SHOP_ICONS[shop.id] ?? '🍽️'}
-                label={`去 ${shop.name}`}
-                sub="路过看看"
-                onClick={() => onDispatchShop(shop.id)}
-              />
-            ))}
-          </div>
-          <div style={{ fontSize: 10, fontWeight: 900, color: 'rgba(255,200,100,0.45)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: 2 }}>外部点位</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, justifyContent: 'center' }}>
-            {spots.map((spot) => (
-              <DispatchBtn
-                key={`${lobster.id}-${spot.id}`}
-                label={spot.label}
-                onClick={() => onDispatchSpot(spot.id)}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DispatchBtn({ icon, label, sub, onClick }: { icon?: string; label: string; sub?: string; onClick: () => void }) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => { playAudioFile('/usual.mp3', 0.5); onClick(); }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        flexShrink: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 2,
-        padding: '6px 12px',
-        borderRadius: 14,
-        border: `1px solid ${hovered ? 'rgba(255,140,30,0.7)' : 'rgba(255,200,100,0.20)'}`,
-        background: hovered ? 'rgba(235,110,20,0.88)' : 'rgba(255,255,255,0.06)',
-        cursor: 'pointer',
-        transition: 'background 180ms, border-color 180ms, transform 180ms',
-        transform: hovered ? 'translateY(-2px)' : 'translateY(0)',
-        minWidth: 70,
-      }}
-    >
-      {icon ? <span style={{ fontSize: 15 }}>{icon}</span> : null}
-      <span style={{ fontSize: 12, fontWeight: 900, color: hovered ? '#fff' : 'rgba(255,230,160,0.88)', whiteSpace: 'nowrap' }}>{label}</span>
-      {sub ? <span style={{ fontSize: 10, color: hovered ? 'rgba(255,255,255,0.75)' : 'rgba(255,200,120,0.45)', fontWeight: 700 }}>{sub}</span> : null}
-    </button>
-  );
-}
 
 export default function XuhuiIslandPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [shopMetrics, setShopMetrics] = useState<Record<string, ShopMetric>>(createShopMetrics);
   const [lobsters, setLobsters] = useState<LobsterWalker[]>(createInitialLobsters);
   const [soundEnabled, setSoundEnabled] = useState(true); // 默认显示已开启，首次交互后真正播放
@@ -590,10 +294,42 @@ export default function XuhuiIslandPage() {
   const ambientGainRef = useRef<GainNode | null>(null);
   const ambientBootedRef = useRef(false);
   const ambientIntentRef = useRef(true);
+  const storyCardRef = useRef<HTMLDivElement>(null);
+  const [journeyPhase, setJourneyPhase] = useState<JourneyPhase>('hidden');
+  const [firstDayState, setFirstDayState] = useState<FirstDayState | null>(null);
+  const [firstDayAnswers, setFirstDayAnswers] = useState<FirstDayAnswers>({
+    taste: '',
+    vibe: '',
+    mood: '',
+  });
+  const [isSharingStory, setIsSharingStory] = useState(false);
+  const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
+  const [traceState, setTraceState] = useState<TraceState>(DEFAULT_TRACE_STATE);
+  const [traceShopId, setTraceShopId] = useState<string>(XUHUI_SHOPS[0]?.id ?? 'gaga');
+  const [recommendationDraft, setRecommendationDraft] = useState('');
+  const [stoneDraft, setStoneDraft] = useState('');
+  const [activeHudPanel, setActiveHudPanel] = useState<'trace' | 'message' | null>(null);
+  const [mapFeedbackEffect, setMapFeedbackEffect] = useState<MapFeedbackEffect | null>(null);
+  const [memorialHovered, setMemorialHovered] = useState(false);
+  const [memorialMode, setMemorialMode] = useState<'idle' | 'prompt' | 'editing'>('idle');
+  const mapFeedbackTimerRef = useRef<number | null>(null);
+  const memorialPromptShownRef = useRef(false);
+  const firstDayDebugMode = parseFirstDayDebugMode(searchParams.get('firstDay'));
+
+  // 页面卸载时释放 AudioContext，防止内存泄漏
+  useEffect(() => {
+    return () => {
+      disposeAudioContext();
+      if (mapFeedbackTimerRef.current) {
+        window.clearTimeout(mapFeedbackTimerRef.current);
+      }
+    };
+  }, []);
 
   // 客户端 mount 后，用真实时间修正 rating（避免 SSR 固定值 12 与实际时间不符）
   useEffect(() => {
     const realHour = new Date().getHours();
+    setCurrentHour(realHour);
     setShopMetrics((prev) => {
       const next = { ...prev };
       for (const shop of XUHUI_SHOPS) {
@@ -604,6 +340,28 @@ export default function XuhuiIslandPage() {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    const syncHour = () => setCurrentHour(new Date().getHours());
+    syncHour();
+    const timer = window.setInterval(syncHour, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const nextTraceState = recordIslandVisit();
+    setTraceState(nextTraceState);
+    setStoneDraft(nextTraceState.memorialStone?.text ?? '');
+  }, []);
+
+  useEffect(() => {
+    if (!hoveredShopId) return;
+    setTraceShopId(hoveredShopId);
+  }, [hoveredShopId]);
+
+  useEffect(() => {
+    setRecommendationDraft(traceState.recommendations[traceShopId]?.text ?? '');
+  }, [traceShopId, traceState]);
 
   useEffect(() => {
     // 画面视频永远静音
@@ -660,6 +418,75 @@ export default function XuhuiIslandPage() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (firstDayDebugMode) {
+      if (firstDayDebugMode === 'report') {
+        const debugState = createDebugFirstDayState();
+        setFirstDayState(debugState);
+        setFirstDayAnswers({
+          taste: debugState.taste,
+          vibe: debugState.vibe,
+          mood: debugState.mood,
+        });
+        setJourneyPhase('report');
+        return;
+      }
+
+      setFirstDayState(null);
+      setFirstDayAnswers({
+        taste: '',
+        vibe: '',
+        mood: '',
+      });
+      setJourneyPhase(firstDayDebugMode);
+      return;
+    }
+
+    const saved = getItem<FirstDayState | null>(FIRST_DAY_STORAGE_KEY, null);
+    if (saved) {
+      setFirstDayState(saved);
+      setFirstDayAnswers({
+        taste: saved.taste,
+        vibe: saved.vibe,
+        mood: saved.mood,
+      });
+      if (!saved.reportViewedAt && Date.now() >= saved.reportReadyAt) {
+        setJourneyPhase('report');
+      }
+      return;
+    }
+    setJourneyPhase('opening');
+  }, [firstDayDebugMode]);
+
+  useEffect(() => {
+    if (journeyPhase !== 'opening') return;
+    const timer = window.setTimeout(() => setJourneyPhase('intro'), FIRST_DAY_OPENING_MS);
+    return () => window.clearTimeout(timer);
+  }, [journeyPhase]);
+
+  useEffect(() => {
+    if (!firstDayState || firstDayState.reportViewedAt) return;
+    if (Date.now() >= firstDayState.reportReadyAt) {
+      setJourneyPhase('report');
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setJourneyPhase('report'),
+      firstDayState.reportReadyAt - Date.now()
+    );
+    return () => window.clearTimeout(timer);
+  }, [firstDayState]);
+
+  useEffect(() => {
+    if (!firstDayState || firstDayState.reportViewedAt) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [firstDayState]);
+
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -686,6 +513,8 @@ export default function XuhuiIslandPage() {
                 scale: 0.34,
                 opacity: 0,
                 bubbleText: undefined,
+                completedTrips: lobster.completedTrips + 1,
+                intelCount: lobster.intelCount + 1,
                 nextActionAt: now + getRandomInsideDuration(),
               });
               return nextLobsters;
@@ -696,8 +525,9 @@ export default function XuhuiIslandPage() {
               mode: 'speaking',
               scale: 1,
               opacity: 1,
-              bubbleText: getRandomBubbleLine(),
+              bubbleText: getRandomBubbleLine(lobster),
               bubbleKey: lobster.bubbleKey + 1,
+              completedTrips: lobster.completedTrips + 1,
               nextActionAt: now + SPEAK_DURATION_MS,
             });
             return nextLobsters;
@@ -721,8 +551,17 @@ export default function XuhuiIslandPage() {
           const referenceLobsters = [...nextLobsters, ...currentLobsters.slice(index + 1)];
           const nextDestination =
             lobster.mode === 'inside'
-              ? chooseSpreadDestination(referenceLobsters.filter((item) => item.id !== lobster.id), 'spot')
-              : chooseSpreadDestination(referenceLobsters.filter((item) => item.id !== lobster.id), 'shop', leavingShopId);
+              ? choosePersonalityDestination(
+                  referenceLobsters.filter((item) => item.id !== lobster.id),
+                  lobster,
+                  'spot'
+                )
+              : choosePersonalityDestination(
+                  referenceLobsters.filter((item) => item.id !== lobster.id),
+                  lobster,
+                  'shop',
+                  leavingShopId
+                );
           const destinationSlot = findDestinationSlot(referenceLobsters, nextDestination, lobster.id);
           const nextPoint = toDestinationPoint(nextDestination, destinationSlot);
 
@@ -738,7 +577,7 @@ export default function XuhuiIslandPage() {
             opacity: 1,
             bubbleText: undefined,
             isDispatched: false, // 自动行走，正常速度
-            nextActionAt: now + TRAVEL_DURATION_MS,
+            nextActionAt: now + getLobsterTravelDuration(lobster),
           });
           return nextLobsters;
         }, [])
@@ -813,15 +652,38 @@ export default function XuhuiIslandPage() {
   };
 
   const enterShop = (shop: XuhuiShop) => {
+    const nextTraceState = recordShopVisit(shop.id);
+    setTraceState(nextTraceState);
     track('xuhui_shop_enter', { shopId: shop.id, shopName: shop.name });
     playAudioFile('/put.wav', 0.7);
     router.push(`/xuhui-island/shop/${shop.id}`);
+  };
+
+  const playDefaultButtonSound = () => {
+    playAudioFile('/usual.mp3', 0.5);
+  };
+
+  const showMapFeedbackEffect = (effect: Omit<MapFeedbackEffect, 'id'>) => {
+    const effectId = Date.now();
+    setMapFeedbackEffect({ id: effectId, ...effect });
+    if (mapFeedbackTimerRef.current) {
+      window.clearTimeout(mapFeedbackTimerRef.current);
+    }
+    mapFeedbackTimerRef.current = window.setTimeout(() => {
+      setMapFeedbackEffect((current) => (current?.id === effectId ? null : current));
+    }, 3000);
   };
 
   const dispatchLobster = (
     lobsterId: string,
     destination: { kind: 'shop'; id: string } | { kind: 'spot'; id: string }
   ) => {
+    const currentLobster = lobsters.find((lobster) => lobster.id === lobsterId);
+    if (!currentLobster) return;
+
+    const departingShopId =
+      currentLobster.mode === 'inside' ? currentLobster.currentShopId : undefined;
+    const dispatchedTravelDuration = getLobsterTravelDuration(currentLobster, true);
     const now = Date.now();
 
     setLobsters((currentLobsters) => {
@@ -830,21 +692,6 @@ export default function XuhuiIslandPage() {
 
       return currentLobsters.map((lobster) => {
         if (lobster.id !== lobsterId) return lobster;
-
-        if (lobster.mode === 'inside' && lobster.currentShopId) {
-          setShopMetrics((currentMetrics) => {
-            const currentMetric = currentMetrics[lobster.currentShopId!];
-            if (!currentMetric) return currentMetrics;
-            return {
-              ...currentMetrics,
-              [lobster.currentShopId!]: {
-                ...currentMetric,
-                visitorCount: clamp(currentMetric.visitorCount - 1, 8, 99),
-                motionTick: currentMetric.motionTick + 1,
-              },
-            };
-          });
-        }
 
         // 第一步：把龙虾瞬移到桥的位置（地图底部居中）作为传送出现点
         return {
@@ -862,10 +709,27 @@ export default function XuhuiIslandPage() {
           isDispatched: true,
           isDispatching: true, // 瞬移中，transition 关闭
           dispatchTarget: point, // 记录最终目标
-          nextActionAt: now + TRAVEL_DURATION_FAST_MS,
+          nextActionAt: now + dispatchedTravelDuration,
         };
       });
     });
+
+    if (departingShopId) {
+      setShopMetrics((currentMetrics) => {
+        const currentMetric = currentMetrics[departingShopId];
+        if (!currentMetric) return currentMetrics;
+
+        return {
+          ...currentMetrics,
+          [departingShopId]: {
+            ...currentMetric,
+            visitorCount: clamp(currentMetric.visitorCount - 1, 8, 99),
+            motionTick: currentMetric.motionTick + 1,
+          },
+        };
+      });
+    }
+
     setSelectedLobsterId(null);
 
     // 派遣后 1 秒播放 wind 声效
@@ -903,12 +767,178 @@ export default function XuhuiIslandPage() {
   };
 
   const selectedLobster = lobsters.find((lobster) => lobster.id === selectedLobsterId) ?? null;
+  const leadLobster = lobsters.find((lobster) => lobster.id === LEAD_LOBSTER_ID) ?? lobsters[0] ?? null;
+  const firstDayReport = firstDayState ? buildFirstDayReport(firstDayState) : null;
+  const timePeriod = getTimePeriod(currentHour);
+  const timeMood = TIME_MOOD_CONFIG[timePeriod];
+  const leadPeriodSpeech = leadLobster?.personality.timeAwareLines?.[timePeriod]?.[0];
+  const backgroundVideoSrc =
+    timePeriod === 'night'
+      ? '/xuhui-island/map-nigt-bg.mp4'
+      : '/xuhui-island/map-bg.mp4';
+  const traceShop = XUHUI_SHOPS.find((shop) => shop.id === traceShopId) ?? XUHUI_SHOPS[0];
+  const unlockedPawPrintShopIds = getUnlockedPawPrintShopIds(traceState);
+  const unlockedPawPrintCount = unlockedPawPrintShopIds.length;
+  const memorialText = traceState.memorialStone?.text ?? '';
+  const hasMemorialText = Boolean(memorialText.trim());
   const boardScale = boardSize
     ? (Math.min(
         boardSize.width / DEFAULT_BOARD_SIZE.width,
         boardSize.height / DEFAULT_BOARD_SIZE.height
       ) || 1)
     : null; // null 时隐藏龙虾层，避免位移抖动
+
+  useEffect(() => {
+    setVideoReady(false);
+  }, [backgroundVideoSrc]);
+
+  const handleAnswer = (field: keyof FirstDayAnswers, value: string) => {
+    setFirstDayAnswers((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleActivateFirstDay = () => {
+    if (!firstDayAnswers.taste || !firstDayAnswers.vibe || !firstDayAnswers.mood) return;
+    const nextState: FirstDayState = {
+      ...firstDayAnswers,
+      activatedAt: Date.now(),
+      firstShopId: chooseFirstDayShop(firstDayAnswers),
+      reportReadyAt: Date.now() + FIRST_DAY_REPORT_DELAY_MS,
+    };
+    setItem(FIRST_DAY_STORAGE_KEY, nextState);
+    setFirstDayState(nextState);
+    setJourneyPhase('hidden');
+    setSelectedLobsterId(null);
+    dispatchLobster(LEAD_LOBSTER_ID, { kind: 'shop', id: nextState.firstShopId });
+  };
+
+  const handleCloseReport = () => {
+    if (!firstDayState) {
+      setJourneyPhase('hidden');
+      return;
+    }
+    const nextState = {
+      ...firstDayState,
+      reportViewedAt: Date.now(),
+    };
+    setItem(FIRST_DAY_STORAGE_KEY, nextState);
+    setFirstDayState(nextState);
+    setJourneyPhase('hidden');
+  };
+
+  const handleShareStory = async () => {
+    if (!firstDayState || !firstDayReport) return;
+    setIsSharingStory(true);
+    try {
+      await shareImageCard(storyCardRef.current, {
+        title: '旺财的第一天',
+        text: `${leadLobster?.name ?? '旺财'}替我跑了今天的第一站：${firstDayReport.shopName}`,
+        fileName: 'wangcai-first-day.png',
+        backgroundColor: '#081f31',
+        preferDownload: true,
+      });
+    } finally {
+      setIsSharingStory(false);
+    }
+  };
+
+  const handleSaveRecommendation = () => {
+    if (!traceShop) return;
+    playAudioFile('/banner.mp3', 0.72);
+    const trimmedText = recommendationDraft.trim();
+    const nextTraceState = saveShopRecommendation(traceShop.id, recommendationDraft);
+    setTraceState(nextTraceState);
+    if (trimmedText) {
+      const position = getShopFeedbackPosition(traceShop);
+      showMapFeedbackEffect({
+        tone: 'shop',
+        title: `${traceShop.name} · 门口小卡`,
+        subtitle: traceShop.intro,
+        detail: `我刚留在门口：${trimmedText}`,
+        left: position.left,
+        top: position.top,
+      });
+    }
+  };
+
+  const handleSaveStone = () => {
+    playAudioFile('/ddda.mp3', 0.76);
+    const trimmedText = stoneDraft.trim();
+    const nextTraceState = saveMemorialStone(stoneDraft);
+    setTraceState(nextTraceState);
+    setStoneDraft(trimmedText);
+    setMemorialMode('idle');
+    if (trimmedText) {
+      showMapFeedbackEffect({
+        tone: 'stone',
+        title: '龙虾纪念石',
+        subtitle: '海风会替你记住这句',
+        detail: `我刚刻上去：${trimmedText}`,
+        left: 'calc(20.5% - 150px)',
+        top: '13%',
+      });
+    }
+  };
+
+  const cycleTraceShop = (direction: 1 | -1) => {
+    const currentIndex = XUHUI_SHOPS.findIndex((shop) => shop.id === traceShopId);
+    const nextIndex = (currentIndex + direction + XUHUI_SHOPS.length) % XUHUI_SHOPS.length;
+    setTraceShopId(XUHUI_SHOPS[nextIndex]?.id ?? XUHUI_SHOPS[0]?.id ?? 'gaga');
+  };
+
+  const toggleHudPanel = (panel: 'trace' | 'message') => {
+    playDefaultButtonSound();
+    setActiveHudPanel((current) => (current === panel ? null : panel));
+  };
+
+  const closeHudPanel = () => {
+    playDefaultButtonSound();
+    setActiveHudPanel(null);
+  };
+
+  const handleMemorialMouseEnter = () => {
+    setMemorialHovered(true);
+    if (!memorialPromptShownRef.current && !hasMemorialText && memorialMode === 'idle') {
+      memorialPromptShownRef.current = true;
+      setMemorialMode('prompt');
+    }
+  };
+
+  const handleMemorialMouseLeave = () => {
+    setMemorialHovered(false);
+  };
+
+  const openMemorialPrompt = () => {
+    playDefaultButtonSound();
+    memorialPromptShownRef.current = true;
+    setMemorialMode('prompt');
+  };
+
+  const startMemorialEditing = () => {
+    playDefaultButtonSound();
+    setStoneDraft(memorialText);
+    setMemorialMode('editing');
+  };
+
+  const dismissMemorialPrompt = () => {
+    playDefaultButtonSound();
+    setMemorialMode('idle');
+  };
+
+  const cancelMemorialEditing = () => {
+    playDefaultButtonSound();
+    setStoneDraft(memorialText);
+    setMemorialMode('idle');
+  };
+
+  const handleMemorialClick = () => {
+    if (hasMemorialText) {
+      startMemorialEditing();
+      return;
+    }
+    if (memorialMode === 'idle') {
+      openMemorialPrompt();
+    }
+  };
 
   return (
     <main style={pageStyle}>
@@ -946,62 +976,16 @@ export default function XuhuiIslandPage() {
         }} />
       </div>
 
-      <section style={{ ...heroStyle, position: 'relative', zIndex: 2 }}>
-        <div
-          style={{
-            display: 'flex',
-            gap: 12,
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
-          <div style={{ ...badgeStyle, background: 'rgba(15,80,68,0.55)', color: '#7eeee0', border: '1px solid rgba(100,220,200,0.3)', letterSpacing: '0.12em' }}>🏝️ JINYANG ISLAND · 美食岛</div>
-          <button
-            type="button"
-            onClick={() => { playAudioFile('/usual.mp3', 0.5); toggleAmbientSound(); }}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 14px',
-              borderRadius: 999,
-              background: soundEnabled ? 'rgba(15,80,68,0.5)' : 'rgba(8,40,55,0.45)',
-              color: soundEnabled ? '#7eeee0' : '#4a9a94',
-              fontSize: 13,
-              fontWeight: 900,
-              cursor: 'pointer',
-              border: `1px solid ${soundEnabled ? 'rgba(100,220,200,0.35)' : 'rgba(60,160,150,0.2)'}`,
-            }}
-          >
-            <span>{soundEnabled ? '🌊' : '🔇'}</span>
-            {soundEnabled ? '关闭海浪声' : '开启海浪声'}
-          </button>
-        </div>
-
-        <h1
-          style={{
-            margin: '14px 0 0',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            flexWrap: 'wrap',
-            fontSize: 'clamp(30px, 5vw, 48px)',
-            lineHeight: 1.04,
-            color: '#b8f0e8',
-            textShadow: '0 0 30px rgba(80,200,180,0.35)',
-          }}
-        >
-          <span style={{ fontSize: '1.18em', lineHeight: 1 }}>🏝️</span>
-          <span>美食之岛 · 解锁8大秘境 · 金杨, 上海</span>
-        </h1>
-        <p style={{ margin: '14px 0 0', maxWidth: 760, fontSize: 16, lineHeight: 1.8, color: 'rgba(160,230,220,0.72)' }}>
-          这片漂浮在蓝绿色海洋上的美食岛，藏着8家各有烟火气的餐厅。和岛上的小龙虾一起探索，进店开聊、看菜单、赚积分！
-        </p>
-      </section>
-
       <section style={mapShellStyle}>
-        <div ref={mapBoardRef} style={mapBoardStyle}>
+        <div
+          ref={mapBoardRef}
+          style={{
+            ...mapBoardStyle,
+            filter: timeMood.mapFilter,
+            transition: 'filter 900ms ease, box-shadow 900ms ease',
+            boxShadow: `${mapBoardStyle.boxShadow}, ${timeMood.glow}`,
+          }}
+        >
           <img
             src="/xuhui-island/map-bg.png"
             alt=""
@@ -1019,6 +1003,7 @@ export default function XuhuiIslandPage() {
             }}
           />
           <video
+            key={backgroundVideoSrc}
             ref={backgroundVideoRef}
             autoPlay
             loop
@@ -1038,7 +1023,7 @@ export default function XuhuiIslandPage() {
               transition: videoReady ? 'opacity 200ms ease' : 'none',
             }}
           >
-            <source src="/xuhui-island/map-bg.mp4" type="video/mp4" />
+            <source src={backgroundVideoSrc} type="video/mp4" />
           </video>
           <div
             style={{
@@ -1057,6 +1042,26 @@ export default function XuhuiIslandPage() {
                 'radial-gradient(circle at 15% 22%, rgba(255,255,255,0.16) 0%, transparent 28%), radial-gradient(circle at 84% 68%, rgba(255,255,255,0.12) 0%, transparent 24%)',
               mixBlendMode: 'screen',
               pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 1,
+              transition: 'opacity 900ms ease, background 900ms ease',
+              ...timeMood.overlay,
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 1,
+              transition: 'opacity 900ms ease, background 900ms ease',
+              ...timeMood.haze,
             }}
           />
 
@@ -1078,18 +1083,364 @@ export default function XuhuiIslandPage() {
               style={{
                 position: 'absolute',
                 top: 16,
-                left: 16,
+                left: 18,
                 zIndex: 5,
-                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
+                width: 'min(70%, 780px)',
+                padding: '12px 18px',
                 borderRadius: 999,
-                background: 'rgba(255,248,230,0.88)',
-                color: '#a16639',
-                fontSize: 12,
-                fontWeight: 800,
-                boxShadow: '0 8px 18px rgba(117,74,37,0.16)',
+                background: 'rgba(7, 25, 38, 0.74)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                boxShadow: '0 16px 32px rgba(0,18,36,0.28)',
+                backdropFilter: 'blur(14px)',
+                WebkitBackdropFilter: 'blur(14px)',
+                color: '#eefbf8',
               }}
             >
-              Q版游戏地图
+              <div style={{ ...badgeStyle, background: 'rgba(15,80,68,0.55)', color: '#7eeee0', border: '1px solid rgba(100,220,200,0.3)', letterSpacing: '0.12em', flexShrink: 0 }}>
+                🏝️ JINYANG ISLAND · 美食岛
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 'clamp(18px, 2vw, 28px)',
+                    fontWeight: 900,
+                    lineHeight: 1.08,
+                    color: '#dffff8',
+                    textShadow: '0 0 20px rgba(80,200,180,0.18)',
+                  }}
+                >
+                  美食之岛 · 金杨, 上海
+                </div>
+                <div
+                  style={{
+                    marginTop: 4,
+                    fontSize: 12,
+                    color: 'rgba(205,240,234,0.72)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  11 位小邻居住在这座岛上。你来了，它们就知道了。
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  playAudioFile('/usual.mp3', 0.5);
+                  toggleAmbientSound();
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginLeft: 'auto',
+                  padding: '8px 14px',
+                  borderRadius: 999,
+                  background: soundEnabled ? 'rgba(15,80,68,0.5)' : 'rgba(8,40,55,0.45)',
+                  color: soundEnabled ? '#7eeee0' : '#4a9a94',
+                  fontSize: 13,
+                  fontWeight: 900,
+                  cursor: 'pointer',
+                  border: `1px solid ${soundEnabled ? 'rgba(100,220,200,0.35)' : 'rgba(60,160,150,0.2)'}`,
+                  flexShrink: 0,
+                }}
+              >
+                <span>{soundEnabled ? '🌊' : '🔇'}</span>
+                {soundEnabled ? '关闭海浪声' : '开启海浪声'}
+              </button>
+            </div>
+
+            {timePeriod === 'night' ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  zIndex: 1,
+                  background:
+                    'radial-gradient(circle at 14% 18%, rgba(255,255,255,0.8) 0 1px, transparent 1.5px), radial-gradient(circle at 29% 12%, rgba(255,255,255,0.72) 0 1.2px, transparent 1.7px), radial-gradient(circle at 43% 17%, rgba(255,255,255,0.7) 0 1.1px, transparent 1.6px), radial-gradient(circle at 61% 10%, rgba(255,255,255,0.74) 0 1.2px, transparent 1.7px), radial-gradient(circle at 74% 19%, rgba(255,255,255,0.7) 0 1.1px, transparent 1.6px), radial-gradient(circle at 86% 13%, rgba(255,255,255,0.76) 0 1.3px, transparent 1.8px)',
+                  opacity: 0.58,
+                }}
+              />
+            ) : null}
+            <TraceOverlays traceState={traceState} />
+            <div
+              onMouseEnter={handleMemorialMouseEnter}
+              onMouseLeave={handleMemorialMouseLeave}
+              onClick={handleMemorialClick}
+              style={{
+                position: 'absolute',
+                left: 'calc(20.5% - 150px)',
+                top: '22%',
+                zIndex: 8,
+                transform: `translate(-50%, -50%) scale(${memorialHovered ? 1.08 : 1})`,
+                transformOrigin: 'center bottom',
+                transition: 'transform 240ms ease',
+                pointerEvents: 'auto',
+                cursor: 'pointer',
+              }}
+            >
+              <div
+                style={{
+                  position: 'relative',
+                  width: 196,
+                  height: 176,
+                }}
+              >
+                {hasMemorialText ? (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: '50%',
+                      top: 0,
+                      transform: 'translateX(-50%)',
+                      pointerEvents: 'none',
+                      animation: 'memorial-flag-wave 3.2s ease-in-out infinite',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'relative',
+                        maxWidth: 160,
+                        minWidth: 108,
+                        padding: '8px 14px 9px',
+                        borderRadius: 999,
+                        background:
+                          'linear-gradient(180deg, rgba(255,244,214,0.98) 0%, rgba(242,222,170,0.96) 100%)',
+                        border: '1px solid rgba(151,112,45,0.26)',
+                        boxShadow: '0 12px 22px rgba(86,62,38,0.14)',
+                        color: '#6e4b1b',
+                        fontSize: 12,
+                        fontWeight: 900,
+                        lineHeight: 1.2,
+                        textAlign: 'center',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {memorialText}
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: -11,
+                          top: 10,
+                          width: 16,
+                          height: 18,
+                          background: 'linear-gradient(180deg, rgba(239,212,149,0.94) 0%, rgba(222,187,108,0.94) 100%)',
+                          clipPath: 'polygon(100% 0, 0 50%, 100% 100%)',
+                          transform: 'rotate(-8deg)',
+                        }}
+                      />
+                      <span
+                        style={{
+                          position: 'absolute',
+                          right: -11,
+                          top: 10,
+                          width: 16,
+                          height: 18,
+                          background: 'linear-gradient(180deg, rgba(239,212,149,0.94) 0%, rgba(222,187,108,0.94) 100%)',
+                          clipPath: 'polygon(0 0, 100% 50%, 0 100%)',
+                          transform: 'rotate(8deg)',
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: '50%',
+                        top: 30,
+                        width: 12,
+                        height: 10,
+                        transform: 'translateX(-50%)',
+                        background: 'rgba(233,203,130,0.96)',
+                        clipPath: 'polygon(50% 100%, 0 0, 100% 0)',
+                        boxShadow: '0 4px 8px rgba(86,62,38,0.1)',
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: 8,
+                    width: 100,
+                    height: 26,
+                    transform: 'translateX(-50%)',
+                    borderRadius: 999,
+                    background: 'rgba(0,0,0,0.16)',
+                    filter: 'blur(12px)',
+                    pointerEvents: 'none',
+                  }}
+                />
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: 18,
+                    transform: 'translateX(-50%)',
+                    fontSize: 88,
+                    lineHeight: 1,
+                    filter: 'drop-shadow(0 10px 14px rgba(0,0,0,0.18))',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  🪨
+                </span>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: hasMemorialText ? 46 : 30,
+                    transform: 'translateX(-50%)',
+                    fontSize: 76,
+                    lineHeight: 1,
+                    filter: 'drop-shadow(0 8px 12px rgba(229,117,54,0.28))',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  🦞
+                </span>
+
+                {memorialMode === 'prompt' && !hasMemorialText ? (
+                  <div
+                    onClick={(event) => event.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      left: 150,
+                      top: 54,
+                      width: 210,
+                      padding: '14px 14px 12px',
+                      borderRadius: 20,
+                      background: 'rgba(9, 28, 42, 0.94)',
+                      border: '1px solid rgba(121,212,198,0.2)',
+                      boxShadow: '0 20px 34px rgba(0,18,36,0.24)',
+                      color: '#eefbf8',
+                      pointerEvents: 'auto',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.45 }}>
+                      需要在纪念石上刻字吗？
+                    </div>
+                    <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={startMemorialEditing}
+                        style={{
+                          flex: 1,
+                          border: 0,
+                          borderRadius: 999,
+                          background: 'linear-gradient(135deg, #ffd89d 0%, #ffb86e 100%)',
+                          color: '#5c3116',
+                          padding: '10px 12px',
+                          fontSize: 13,
+                          fontWeight: 900,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        是
+                      </button>
+                      <button
+                        type="button"
+                        onClick={dismissMemorialPrompt}
+                        style={{
+                          flex: 1,
+                          borderRadius: 999,
+                          border: '1px solid rgba(255,255,255,0.14)',
+                          background: 'rgba(255,255,255,0.06)',
+                          color: '#eefbf8',
+                          padding: '10px 12px',
+                          fontSize: 13,
+                          fontWeight: 900,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        否
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {memorialMode === 'editing' ? (
+                  <div
+                    onClick={(event) => event.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      left: 146,
+                      top: hasMemorialText ? 46 : 38,
+                      width: 250,
+                      padding: '14px 14px 12px',
+                      borderRadius: 22,
+                      background: 'rgba(244,235,222,0.96)',
+                      border: '1px solid rgba(128,96,66,0.14)',
+                      boxShadow: '0 20px 34px rgba(86,62,38,0.18)',
+                      color: '#5e4735',
+                      pointerEvents: 'auto',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 900 }}>在纪念石上刻一句</div>
+                    <input
+                      value={stoneDraft}
+                      onChange={(event) => setStoneDraft(event.target.value)}
+                      placeholder="写下想留在岛上的话"
+                      style={{
+                        width: '100%',
+                        marginTop: 10,
+                        borderRadius: 14,
+                        border: '1px solid rgba(128,96,66,0.16)',
+                        background: 'rgba(255,255,255,0.72)',
+                        color: '#5e4735',
+                        padding: '12px 14px',
+                        fontSize: 14,
+                      }}
+                    />
+                    <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={handleSaveStone}
+                        style={{
+                          flex: 1,
+                          border: 0,
+                          borderRadius: 999,
+                          background: 'linear-gradient(135deg, #ffd89d 0%, #ffb86e 100%)',
+                          color: '#5c3116',
+                          padding: '10px 12px',
+                          fontSize: 13,
+                          fontWeight: 900,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        确定
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelMemorialEditing}
+                        style={{
+                          flex: 1,
+                          borderRadius: 999,
+                          border: '1px solid rgba(128,96,66,0.16)',
+                          background: 'rgba(255,255,255,0.62)',
+                          color: '#5e4735',
+                          padding: '10px 12px',
+                          fontSize: 13,
+                          fontWeight: 900,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {lobsters.map((lobster) => {
@@ -1098,7 +1449,7 @@ export default function XuhuiIslandPage() {
               // 被选中的龙虾在底部弹框展示，地图上隐藏
               const hiddenOnMap = isSelected;
               // 移动时长：被派遣的用快速时长
-              const travelDuration = lobster.isDispatched ? TRAVEL_DURATION_FAST_MS : TRAVEL_DURATION_MS;
+              const travelDuration = getLobsterTravelDuration(lobster, Boolean(lobster.isDispatched));
 
               return (
                 <div
@@ -1299,6 +1650,23 @@ export default function XuhuiIslandPage() {
                     </span>{' '}
                     份
                   </div>
+                  {traceState.recommendations[shop.id] ? (
+                    <div
+                      style={{
+                        marginTop: 7,
+                        paddingTop: 7,
+                        borderTop: '1px solid rgba(255,255,255,0.08)',
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        color: 'rgba(224,245,240,0.86)',
+                      }}
+                    >
+                      <span style={{ color: '#7eeee0', fontWeight: 900 }}>
+                        {traceState.recommendations[shop.id]?.authorName}
+                      </span>
+                      {` 留下的话：${traceState.recommendations[shop.id]?.text}`}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div
@@ -1552,78 +1920,492 @@ export default function XuhuiIslandPage() {
               点击店铺直接进入店内，查看菜单、聊天或打工赚积分
             </div>
 
-            {/* 传送门特效：从白色圆圈位置爆出 */}
-            {portalEffect ? (
+            <button
+              type="button"
+              onClick={() => toggleHudPanel('trace')}
+              style={{
+                position: 'absolute',
+                left: 14,
+                bottom: 26,
+                zIndex: 6,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 999,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'rgba(12, 28, 39, 0.82)',
+                color: '#f2fff9',
+                boxShadow: '0 0 0 1px rgba(126,238,224,0.06), 0 0 24px rgba(126,238,224,0.24)',
+                cursor: 'pointer',
+                animation: 'hud-glow 2.4s ease-in-out infinite',
+              }}
+            >
+              <span style={{ fontSize: 18 }}>📖</span>
+              <span style={{ fontSize: 12, fontWeight: 900 }}>岛民手账</span>
+              <span style={{ fontSize: 12, opacity: 0.76 }}>➜</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => toggleHudPanel('message')}
+              style={{
+                position: 'absolute',
+                right: 14,
+                bottom: 34,
+                zIndex: 6,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 999,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'rgba(31, 26, 45, 0.84)',
+                color: '#fff6ee',
+                boxShadow: '0 0 0 1px rgba(255,192,128,0.06), 0 0 26px rgba(255,176,88,0.24)',
+                cursor: 'pointer',
+                animation: 'hud-glow-warm 2.4s ease-in-out infinite',
+              }}
+            >
+              <span style={{ fontSize: 18 }}>💌</span>
+              <span style={{ fontSize: 12, fontWeight: 900 }}>岛上留言</span>
+              <span style={{ fontSize: 12, opacity: 0.76 }}>➜</span>
+            </button>
+
+            {activeHudPanel === 'trace' ? (
               <div
-                key={portalEffect.id}
                 style={{
                   position: 'absolute',
-                  left: `${portalEffect.x}%`,
-                  top: `${portalEffect.y}%`,
-                  transform: 'translate(-50%, -50%)',
-                  pointerEvents: 'none',
-                  zIndex: 20,
+                  left: 20,
+                  bottom: 78,
+                  zIndex: 7,
+                  width: 340,
+                  maxWidth: 'calc(100% - 40px)',
+                  padding: '18px 18px 16px',
+                  borderRadius: 26,
+                  background: 'rgba(7, 28, 40, 0.9)',
+                  border: '1px solid rgba(100,220,200,0.24)',
+                  boxShadow: '0 22px 42px rgba(0,18,36,0.36)',
+                  backdropFilter: 'blur(14px)',
+                  WebkitBackdropFilter: 'blur(14px)',
+                  color: '#e8fbf5',
                 }}
               >
-                {/* 外层扩散光环1 */}
-                <div style={{
-                  position: 'absolute',
-                  left: '50%', top: '50%',
-                  width: 160, height: 160,
-                  borderRadius: '50%',
-                  border: '3px solid rgba(255,255,255,0.9)',
-                  boxShadow: '0 0 24px rgba(255,255,255,0.7), 0 0 48px rgba(180,220,255,0.5)',
-                  transform: 'translate(-50%,-50%)',
-                  animation: 'portal-ring-expand 1.0s ease-out forwards',
-                }} />
-                {/* 外层扩散光环2（延迟） */}
-                <div style={{
-                  position: 'absolute',
-                  left: '50%', top: '50%',
-                  width: 100, height: 100,
-                  borderRadius: '50%',
-                  border: '2px solid rgba(180,220,255,0.8)',
-                  boxShadow: '0 0 16px rgba(180,220,255,0.6)',
-                  transform: 'translate(-50%,-50%)',
-                  animation: 'portal-ring-expand 1.0s ease-out 0.12s forwards',
-                }} />
-                {/* 中心强光闪 */}
-                <div style={{
-                  position: 'absolute',
-                  left: '50%', top: '50%',
-                  width: 70, height: 70,
-                  borderRadius: '50%',
-                  background: 'radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(200,230,255,0.7) 40%, transparent 75%)',
-                  transform: 'translate(-50%,-50%)',
-                  animation: 'portal-core-flash 0.6s ease-out forwards',
-                }} />
-                {/* 旋转光圈 */}
-                <div style={{
-                  position: 'absolute',
-                  left: '50%', top: '50%',
-                  width: 120, height: 120,
-                  borderRadius: '50%',
-                  border: '2px dashed rgba(160,200,255,0.7)',
-                  transform: 'translate(-50%,-50%)',
-                  animation: 'portal-spin 0.6s linear forwards, portal-ring-expand 1.0s ease-out 0.05s forwards',
-                }} />
-                {/* 粒子光点 */}
-                {[0,1,2,3,4,5,6,7].map((i) => (
-                  <div key={i} style={{
-                    position: 'absolute',
-                    left: '50%', top: '50%',
-                    width: 6, height: 6,
-                    borderRadius: '50%',
-                    background: i % 2 === 0 ? 'rgba(255,255,255,0.9)' : 'rgba(180,220,255,0.85)',
-                    boxShadow: '0 0 6px rgba(200,230,255,0.8)',
-                    transformOrigin: '0 0',
-                    animation: `portal-particle-${i} 0.9s ease-out forwards`,
-                    transform: `translate(-50%,-50%) rotate(${i * 45}deg) translate(0, -55px)`,
-                    animationDelay: `${i * 0.02}s`,
-                  }} />
-                ))}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: '#9af7e6', letterSpacing: '0.12em' }}>
+                      COLLECTION
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900 }}>你的常去店</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeHudPanel}
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'rgba(255,255,255,0.06)',
+                      color: '#e8fbf5',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div
+                  style={{
+                    marginTop: 14,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ padding: '12px 10px', borderRadius: 16, background: 'rgba(255,255,255,0.06)' }}>
+                    <div style={{ fontSize: 11, color: 'rgba(196,232,226,0.72)' }}>🗓 连续来岛</div>
+                    <div style={{ marginTop: 6, fontSize: 20, fontWeight: 900, color: '#7eeee0' }}>
+                      {traceState.visitStreak} 天
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px 10px', borderRadius: 16, background: 'rgba(255,255,255,0.06)' }}>
+                    <div style={{ fontSize: 11, color: 'rgba(196,232,226,0.72)' }}>⭐ 常去店</div>
+                    <div style={{ marginTop: 6, fontSize: 20, fontWeight: 900, color: '#ffd9a2' }}>
+                      {unlockedPawPrintCount} 家
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px 10px', borderRadius: 16, background: 'rgba(255,255,255,0.06)' }}>
+                    <div style={{ fontSize: 11, color: 'rgba(196,232,226,0.72)' }}>🌳 你的树</div>
+                    <div style={{ marginTop: 6, fontSize: 15, fontWeight: 900, color: '#c6f7a4' }}>
+                      {traceState.visitStreak >= TREE_STREAK_THRESHOLD ? '长出来了' : `还差 ${Math.max(TREE_STREAK_THRESHOLD - traceState.visitStreak, 0)} 天`}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {unlockedPawPrintShopIds.slice(0, 3).map((shopId) => {
+                    const shop = XUHUI_SHOPS.find((item) => item.id === shopId);
+                    if (!shop) return null;
+                    return (
+                      <div
+                        key={shop.id}
+                        style={{
+                          flex: '1 1 90px',
+                          minWidth: 90,
+                          padding: '10px 8px',
+                          borderRadius: 18,
+                          background: 'rgba(255,255,255,0.06)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          textAlign: 'center',
+                        }}
+                      >
+                        <img
+                          src={shop.image}
+                          alt={shop.name}
+                          draggable={false}
+                          style={{
+                            width: 64,
+                            height: 64,
+                            objectFit: 'contain',
+                            filter: 'drop-shadow(0 8px 16px rgba(0,0,0,0.2))',
+                          }}
+                        />
+                        <div style={{ marginTop: 4, fontSize: 11, fontWeight: 900, color: '#fff7ee' }}>
+                          ⭐ {shop.name}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ) : null}
+
+            {activeHudPanel === 'message' ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  right: 20,
+                  bottom: 86,
+                  zIndex: 7,
+                  width: 340,
+                  maxWidth: 'calc(100% - 40px)',
+                  padding: '18px 18px 16px',
+                  borderRadius: 26,
+                  background: 'rgba(18, 24, 38, 0.92)',
+                  border: '1px solid rgba(255,214,163,0.18)',
+                  boxShadow: '0 22px 42px rgba(0,18,36,0.36)',
+                  backdropFilter: 'blur(14px)',
+                  WebkitBackdropFilter: 'blur(14px)',
+                  color: '#fff7ee',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: '#ffd59d', letterSpacing: '0.12em' }}>
+                      POSTCARD
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 20, fontWeight: 900 }}>
+                      给 {traceShop?.name ?? '这家店'} 留张小卡
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeHudPanel}
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'rgba(255,255,255,0.06)',
+                      color: '#fff7ee',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playDefaultButtonSound();
+                      cycleTraceShop(-1);
+                    }}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'rgba(255,255,255,0.06)',
+                      color: '#fff7ee',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ←
+                  </button>
+                  <div
+                    style={{
+                      flex: 1,
+                      padding: '10px 12px',
+                      borderRadius: 14,
+                      background: 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      fontSize: 14,
+                      fontWeight: 800,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {traceShop?.name ?? '岛上的这家店'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playDefaultButtonSound();
+                      cycleTraceShop(1);
+                    }}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'rgba(255,255,255,0.06)',
+                      color: '#fff7ee',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    →
+                  </button>
+                </div>
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 14,
+                    borderRadius: 20,
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {traceShop ? (
+                      <img
+                        src={traceShop.image}
+                        alt={traceShop.name}
+                        draggable={false}
+                        style={{
+                          width: 84,
+                          height: 84,
+                          objectFit: 'contain',
+                          filter: 'drop-shadow(0 10px 18px rgba(0,0,0,0.18))',
+                          flexShrink: 0,
+                        }}
+                      />
+                    ) : null}
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {[
+                        { icon: '💛', line: QUICK_RECOMMENDATION_LINES[0] },
+                        { icon: '🌙', line: QUICK_RECOMMENDATION_LINES[1] },
+                        { icon: '✨', line: QUICK_RECOMMENDATION_LINES[2] },
+                      ].map((item) => (
+                        <button
+                          key={item.line}
+                          type="button"
+                          onClick={() => {
+                            playDefaultButtonSound();
+                            setRecommendationDraft(item.line);
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 44,
+                            height: 44,
+                            borderRadius: '50%',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            background: 'rgba(255,255,255,0.06)',
+                            color: '#fff7ee',
+                            fontSize: 20,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {item.icon}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <input
+                  value={recommendationDraft}
+                  onChange={(event) => setRecommendationDraft(event.target.value)}
+                  placeholder="写一句短短的话"
+                  style={{
+                    width: '100%',
+                    marginTop: 12,
+                    borderRadius: 14,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: '#fffdf9',
+                    padding: '12px 14px',
+                    fontSize: 14,
+                  }}
+                />
+                <div style={{ marginTop: 12, display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={handleSaveRecommendation}
+                    style={{
+                      flex: 1,
+                      border: 0,
+                      borderRadius: 999,
+                      background: 'linear-gradient(135deg, #ffd89d 0%, #ffb86e 100%)',
+                      color: '#5c3116',
+                      padding: '12px 16px',
+                      fontSize: 14,
+                      fontWeight: 900,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    留在店门口
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* 传送门特效组件 */}
+            <PortalEffect effect={portalEffect} />
+            {mapFeedbackEffect ? (
+              <div
+                key={mapFeedbackEffect.id}
+                style={{
+                  position: 'absolute',
+                  left: mapFeedbackEffect.left,
+                  top: mapFeedbackEffect.top,
+                  zIndex: 9,
+                  width: 290,
+                  maxWidth: 290,
+                  transform: 'translate(-50%, -100%)',
+                  pointerEvents: 'none',
+                  animation: 'map-feedback-rise 3s cubic-bezier(0.22,1,0.36,1) forwards',
+                }}
+              >
+                <div
+                  style={{
+                    position: 'relative',
+                    padding: '14px 16px 14px 14px',
+                    borderRadius: 24,
+                    border:
+                      mapFeedbackEffect.tone === 'shop'
+                        ? '1px solid rgba(255,214,163,0.46)'
+                        : '1px solid rgba(196,183,160,0.52)',
+                    background:
+                      mapFeedbackEffect.tone === 'shop'
+                        ? 'linear-gradient(180deg, rgba(61,37,23,0.94) 0%, rgba(38,24,18,0.92) 100%)'
+                        : 'linear-gradient(180deg, rgba(241,233,221,0.96) 0%, rgba(219,207,191,0.94) 100%)',
+                    color: mapFeedbackEffect.tone === 'shop' ? '#fff6eb' : '#4f3f34',
+                    boxShadow:
+                      mapFeedbackEffect.tone === 'shop'
+                        ? '0 20px 36px rgba(36,18,9,0.28)'
+                        : '0 20px 36px rgba(70,52,36,0.18)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background:
+                        mapFeedbackEffect.tone === 'shop'
+                          ? 'radial-gradient(circle at 18% 22%, rgba(255,220,170,0.22) 0%, transparent 28%), radial-gradient(circle at 84% 20%, rgba(255,174,90,0.14) 0%, transparent 24%)'
+                          : 'radial-gradient(circle at 18% 22%, rgba(255,255,255,0.36) 0%, transparent 30%), radial-gradient(circle at 84% 20%, rgba(173,149,122,0.18) 0%, transparent 26%)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 16,
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background:
+                          mapFeedbackEffect.tone === 'shop'
+                            ? 'rgba(255,255,255,0.08)'
+                            : 'rgba(110,88,64,0.08)',
+                        border:
+                          mapFeedbackEffect.tone === 'shop'
+                            ? '1px solid rgba(255,255,255,0.08)'
+                            : '1px solid rgba(110,88,64,0.12)',
+                        fontSize: 22,
+                      }}
+                    >
+                      {mapFeedbackEffect.tone === 'shop' ? '💌' : '🪨'}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 900, lineHeight: 1.2 }}>
+                        {mapFeedbackEffect.title}
+                      </div>
+                      {mapFeedbackEffect.subtitle ? (
+                        <div
+                          style={{
+                            marginTop: 5,
+                            fontSize: 11,
+                            lineHeight: 1.45,
+                            color:
+                              mapFeedbackEffect.tone === 'shop'
+                                ? 'rgba(255,232,209,0.74)'
+                                : 'rgba(93,72,54,0.74)',
+                          }}
+                        >
+                          {mapFeedbackEffect.subtitle}
+                        </div>
+                      ) : null}
+                      <div
+                        style={{
+                          marginTop: 8,
+                          fontSize: 12,
+                          lineHeight: 1.55,
+                          fontWeight: 800,
+                          color:
+                            mapFeedbackEffect.tone === 'shop'
+                              ? '#ffdcb0'
+                              : '#5f4737',
+                        }}
+                      >
+                        {mapFeedbackEffect.detail}
+                      </div>
+                    </div>
+                  </div>
+                  {[0, 1, 2].map((index) => (
+                    <span
+                      key={`feedback-spark-${index}`}
+                      style={{
+                        position: 'absolute',
+                        right: 20 + index * 16,
+                        top: 12 + (index % 2) * 12,
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background:
+                          mapFeedbackEffect.tone === 'shop'
+                            ? 'rgba(255,225,176,0.88)'
+                            : 'rgba(143,112,83,0.54)',
+                        boxShadow:
+                          mapFeedbackEffect.tone === 'shop'
+                            ? '0 0 12px rgba(255,210,130,0.54)'
+                            : '0 0 10px rgba(143,112,83,0.26)',
+                        animation: `feedback-spark 1.4s ease-in-out ${index * 0.12}s infinite`,
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <AgentStatusCard
+              lobster={leadLobster}
+              period={timePeriod}
+              periodSpeech={leadPeriodSpeech}
+            />
           </div>
 
         </div>
@@ -1639,33 +2421,6 @@ export default function XuhuiIslandPage() {
             onDispatchSpot={(spotId) => dispatchLobster(selectedLobster.id, { kind: 'spot', id: spotId })}
           />
         ) : null}
-      </section>
-
-
-      <section
-        style={{
-          maxWidth: 1420,
-          margin: '14px auto 0',
-        }}
-      >
-        <div style={statsRowStyle}>
-          <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>🏪 入驻门店</div>
-            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900, color: '#7eeee0' }}>{XUHUI_SHOPS.length}</div>
-          </div>
-          <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>📍 所在商场</div>
-            <div style={{ marginTop: 8, fontSize: 18, fontWeight: 900, color: '#7eeee0' }}>浦东 LCM</div>
-          </div>
-          <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>🦞 岛上巡游虾</div>
-            <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900, color: '#7eeee0' }}>{lobsters.length}</div>
-          </div>
-          <div style={statCardStyle}>
-            <div style={{ fontSize: 13, color: 'rgba(100,220,200,0.7)' }}>🌊 世界观</div>
-            <div style={{ marginTop: 8, fontSize: 14, fontWeight: 900, color: '#7eeee0', lineHeight: 1.4 }}>漂浮海洋上的美食岛</div>
-          </div>
-        </div>
       </section>
       <style jsx>{`
         .metric-value {
@@ -1860,7 +2615,131 @@ export default function XuhuiIslandPage() {
           0%   { transform: translate(-50%,-50%) rotate(315deg) translate(0,-10px); opacity:1; }
           100% { transform: translate(-50%,-50%) rotate(315deg) translate(0,-74px) scale(0); opacity:0; }
         }
+
+        @keyframes first-day-opening {
+          0% {
+            opacity: 0;
+            transform: translateY(18px) scale(0.96);
+          }
+          18% {
+            opacity: 1;
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @keyframes hud-glow {
+          0%,
+          100% {
+            transform: translateY(0);
+            box-shadow: 0 0 0 1px rgba(126,238,224,0.06), 0 0 24px rgba(126,238,224,0.24);
+          }
+          50% {
+            transform: translateY(-2px);
+            box-shadow: 0 0 0 1px rgba(126,238,224,0.12), 0 0 34px rgba(126,238,224,0.34);
+          }
+        }
+
+        @keyframes hud-glow-warm {
+          0%,
+          100% {
+            transform: translateY(0);
+            box-shadow: 0 0 0 1px rgba(255,192,128,0.06), 0 0 26px rgba(255,176,88,0.24);
+          }
+          50% {
+            transform: translateY(-2px);
+            box-shadow: 0 0 0 1px rgba(255,192,128,0.12), 0 0 36px rgba(255,176,88,0.34);
+          }
+        }
+
+        @keyframes map-feedback-rise {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, -88%) scale(0.92);
+            filter: blur(4px);
+          }
+          12% {
+            opacity: 1;
+            transform: translate(-50%, -100%) scale(1);
+            filter: blur(0);
+          }
+          82% {
+            opacity: 1;
+            transform: translate(-50%, -106%) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translate(-50%, -118%) scale(1.03);
+          }
+        }
+
+        @keyframes feedback-spark {
+          0%,
+          100% {
+            opacity: 0.35;
+            transform: translateY(0) scale(0.9);
+          }
+          50% {
+            opacity: 1;
+            transform: translateY(-4px) scale(1.08);
+          }
+        }
+
+        @keyframes memorial-flag-wave {
+          0%,
+          100% {
+            transform: translateX(-50%) rotate(-2deg) skewX(0deg);
+          }
+          50% {
+            transform: translateX(-50%) rotate(2deg) skewX(-4deg);
+          }
+        }
       `}</style>
+
+      <OnboardingJourney
+        phase={journeyPhase}
+        answers={firstDayAnswers}
+        choiceGroups={FIRST_DAY_CHOICE_GROUPS}
+        report={firstDayReport}
+        onAnswer={handleAnswer}
+        onContinueIntro={() => setJourneyPhase('questions')}
+        onActivate={handleActivateFirstDay}
+        onCloseReport={handleCloseReport}
+        onShareStory={firstDayState ? handleShareStory : undefined}
+        isSharingStory={isSharingStory}
+        leadVariant={leadLobster?.variant}
+      />
+
+      {firstDayState && firstDayReport ? (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            left: -10000,
+            top: 0,
+            width: 760,
+            pointerEvents: 'none',
+            opacity: 0,
+          }}
+        >
+          <div ref={storyCardRef}>
+            <FirstDayStoryCard
+              taste={firstDayState.taste}
+              vibe={firstDayState.vibe}
+              mood={firstDayState.mood}
+              firstLine={firstDayReport.openingLine}
+              firstStop={firstDayReport.shopName}
+              reportLine={firstDayReport.summaryLine}
+              timeLabel={firstDayReport.timeLabel}
+              leadName={leadLobster?.name ?? '旺财'}
+              leadVariant={leadLobster?.variant}
+              shopImage={firstDayReport.shopImage}
+            />
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

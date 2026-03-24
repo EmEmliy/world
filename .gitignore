@@ -19,6 +19,12 @@
 # misc
 .DS_Store
 .codex-*.png
+.codex-artifacts/
+.codex-pdf/
+.vscode/
+.catpaw_tmp_km_test.md
+.!*
+src/app/xuhui-island/shop/types/test.txt
 *.pem
 
 # debug
