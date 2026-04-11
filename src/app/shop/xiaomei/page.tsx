@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { NPC_CONFIG, QUEST_CONFIG, MENU } from '@/config/game';
 import { track } from '@/lib/tracker';
 import { getChatApiUrl } from '@/lib/chat-api';
+import { resolveIncrementalVisibleText } from '@/lib/chat-stream';
 import { CrayfishAvatar, getCrayfishVariant } from '@/components/game/crayfish-avatar';
 import { QuestProgress } from '@/components/game/quest-progress';
 import { RewardModal } from '@/components/game/reward-modal';
@@ -61,26 +62,25 @@ export default function ShopPage() {
           const chunk = decoder.decode(value);
           const lines = chunk.split('\n');
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-              try {
-                const parsed = JSON.parse(data);
-                const content = parsed.choices?.[0]?.delta?.content || '';
-                if (content) {
-                  assistantMessage += content;
-                  const filteredContent = assistantMessage
-                    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                    .replace(/<think>[\s\S]*?/gi, '')
-                    .replace(/<\/think>/gi, '');
-                  setMessages(prev => {
-                    const newMessages = [...prev];
-                    newMessages[newMessages.length - 1] = { role: 'assistant', content: filteredContent };
-                    return newMessages;
-                  });
-                }
-              } catch {}
-            }
+            if (!line.startsWith('data:')) continue;
+            const data = line.replace(/^data:\s?/, '');
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              const content = resolveIncrementalVisibleText(parsed, assistantMessage);
+              if (content) {
+                assistantMessage += content;
+                const filteredContent = assistantMessage
+                  .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                  .replace(/<think>[\s\S]*?/gi, '')
+                  .replace(/<\/think>/gi, '');
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  newMessages[newMessages.length - 1] = { role: 'assistant', content: filteredContent };
+                  return newMessages;
+                });
+              }
+            } catch {}
           }
         }
       }

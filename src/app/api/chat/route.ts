@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createSseEvent, createThinkStripper, resolveIncrementalVisibleText } from '@/lib/chat-stream';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,30 +16,91 @@ type ChatRequestBody = {
 
 function normalizeChatEndpoint(baseUrl: string) {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
-  if (
-    trimmed.endsWith('/text/chatcompletion_v2') ||
-    trimmed.endsWith('/chat/completions')
-  ) {
+  if (trimmed.endsWith('/chat/completions')) {
     return trimmed;
   }
-
-  if (trimmed.endsWith('/v1')) {
-    return `${trimmed}/text/chatcompletion_v2`;
-  }
-
   return `${trimmed}/chat/completions`;
 }
 
+function normalizeUpstreamSseStream(upstreamBody: ReadableStream<Uint8Array>) {
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let buffer = '';
+      let emittedText = '';
+      const stripThink = createThinkStripper();
+
+      const processLine = (line: string) => {
+        if (!line.startsWith('data:')) {
+          return;
+        }
+
+        const data = line.replace(/^data:\s?/, '').trim();
+        if (!data) {
+          return;
+        }
+
+        if (data === '[DONE]') {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(data) as unknown;
+          const text = stripThink(resolveIncrementalVisibleText(parsed, emittedText));
+          if (!text) {
+            return;
+          }
+          emittedText += text;
+          controller.enqueue(encoder.encode(createSseEvent(text)));
+        } catch {
+          controller.enqueue(encoder.encode(`${line}\n`));
+        }
+      };
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            processLine(line);
+          }
+        }
+
+        buffer += decoder.decode();
+        if (buffer) {
+          processLine(buffer);
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+}
+
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.MINIMAX_API_KEY?.trim();
-  const model = process.env.MINIMAX_MODEL?.trim();
-  const baseUrl = process.env.MINIMAX_BASE_URL?.trim();
+  const apiKey = process.env.KIMI_API_KEY?.trim();
+  const model = process.env.KIMI_MODEL?.trim();
+  const baseUrl = process.env.KIMI_BASE_URL?.trim();
 
   if (!apiKey || !model || !baseUrl) {
     return NextResponse.json(
       {
         error:
-          'MiniMax chat env is incomplete. Expected MINIMAX_API_KEY, MINIMAX_MODEL and MINIMAX_BASE_URL.',
+          'Kimi chat env is incomplete. Expected KIMI_API_KEY, KIMI_MODEL and KIMI_BASE_URL.',
       },
       { status: 500 }
     );
@@ -83,7 +145,7 @@ export async function POST(request: NextRequest) {
       const errorText = await upstreamResponse.text();
       return NextResponse.json(
         {
-          error: 'MiniMax upstream request failed.',
+          error: 'Kimi upstream request failed.',
           status: upstreamResponse.status,
           detail: errorText,
         },
@@ -91,7 +153,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return new Response(upstreamResponse.body, {
+    return new Response(normalizeUpstreamSseStream(upstreamResponse.body), {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -101,9 +163,9 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('MiniMax chat route error:', error);
+    console.error('Kimi chat route error:', error);
     return NextResponse.json(
-      { error: 'Failed to connect to MiniMax upstream.' },
+      { error: 'Failed to connect to Kimi upstream.' },
       { status: 500 }
     );
   }

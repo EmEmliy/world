@@ -1,5 +1,5 @@
-const DEFAULT_MODEL = 'MiniMax-M2.5-highspeed';
-const DEFAULT_BASE_URL = 'https://api.minimaxi.com/v1';
+const DEFAULT_MODEL = 'kimi-for-coding';
+const DEFAULT_BASE_URL = 'https://api.kimi.com/coding/v1';
 const DEFAULT_SYSTEM_PROMPT = `
 你是小美拉面馆的店小二，是一只可爱的小龙虾形象（OpenClaw AI 助理）。你的任务是：
 1. 接待顾客，热情介绍菜品
@@ -50,10 +50,240 @@ function json(data, init = {}) {
 function resolveEnv(context) {
   const env = context.env || {};
   return {
-    apiKey: env.MINIMAX_API_KEY || process.env.MINIMAX_API_KEY,
-    model: env.MINIMAX_MODEL || process.env.MINIMAX_MODEL || DEFAULT_MODEL,
-    baseUrl: env.MINIMAX_BASE_URL || process.env.MINIMAX_BASE_URL || DEFAULT_BASE_URL,
+    apiKey: env.KIMI_API_KEY || process.env.KIMI_API_KEY,
+    model: env.KIMI_MODEL || process.env.KIMI_MODEL || DEFAULT_MODEL,
+    baseUrl: env.KIMI_BASE_URL || process.env.KIMI_BASE_URL || DEFAULT_BASE_URL,
   };
+}
+
+function isRecord(value) {
+  return typeof value === 'object' && value !== null;
+}
+
+function readText(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(readText).join('');
+  }
+
+  if (!isRecord(value)) {
+    return '';
+  }
+
+  if (typeof value.text === 'string') {
+    return value.text;
+  }
+
+  if (isRecord(value.text) && typeof value.text.value === 'string') {
+    return value.text.value;
+  }
+
+  if (typeof value.value === 'string') {
+    return value.value;
+  }
+
+  if (typeof value.content === 'string') {
+    return value.content;
+  }
+
+  if (Array.isArray(value.content)) {
+    return value.content.map(readText).join('');
+  }
+
+  return '';
+}
+
+function extractVisibleDeltaText(payload) {
+  if (!isRecord(payload)) {
+    return '';
+  }
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const firstChoice = choices.length > 0 && isRecord(choices[0]) ? choices[0] : null;
+  const delta = firstChoice && isRecord(firstChoice.delta) ? firstChoice.delta : null;
+  const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null;
+
+  const candidates = [
+    delta && delta.content,
+    delta && delta.text,
+    message && message.content,
+    firstChoice && firstChoice.text,
+    payload.content,
+    payload.output_text,
+  ];
+
+  for (const candidate of candidates) {
+    const text = readText(candidate);
+    if (text) {
+      return text;
+    }
+  }
+
+  return '';
+}
+
+function resolveIncrementalVisibleText(payload, currentText) {
+  const text = extractVisibleDeltaText(payload);
+  if (!text) {
+    return '';
+  }
+
+  if (!currentText) {
+    return text;
+  }
+
+  if (text === currentText) {
+    return '';
+  }
+
+  if (text.startsWith(currentText)) {
+    return text.slice(currentText.length);
+  }
+
+  return text;
+}
+
+function createThinkStripper() {
+  let inThink = false;
+  let tagBuffer = '';
+
+  const OPEN_TAG = '<think>';
+  const CLOSE_TAG = '</think>';
+
+  const flushTagBuffer = () => {
+    if (!tagBuffer) {
+      return '';
+    }
+    const text = tagBuffer;
+    tagBuffer = '';
+    return text;
+  };
+
+  const strip = (input) => {
+    if (!input) {
+      return '';
+    }
+
+    let out = '';
+    let i = 0;
+
+    while (i < input.length) {
+      if (inThink) {
+        const end = input.indexOf(CLOSE_TAG, i);
+        if (end === -1) {
+          i = input.length;
+        } else {
+          inThink = false;
+          i = end + CLOSE_TAG.length;
+        }
+        continue;
+      }
+
+      const ch = input[i];
+      tagBuffer += ch;
+      i += 1;
+
+      if (OPEN_TAG.startsWith(tagBuffer)) {
+        if (tagBuffer === OPEN_TAG) {
+          inThink = true;
+          tagBuffer = '';
+        }
+        continue;
+      }
+
+      out += tagBuffer[0];
+      const rest = tagBuffer.slice(1);
+      tagBuffer = '';
+
+      if (rest) {
+        out += strip(rest);
+      }
+    }
+
+    if (tagBuffer && !OPEN_TAG.startsWith(tagBuffer)) {
+      out += flushTagBuffer();
+    }
+
+    return out;
+  };
+
+  return strip;
+}
+
+function createSseEvent(text) {
+  return `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+}
+
+function normalizeUpstreamSseStream(upstreamBody) {
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      let buffer = '';
+      let emittedText = '';
+      const stripThink = createThinkStripper();
+
+      const processLine = (line) => {
+        if (!line.startsWith('data:')) {
+          return;
+        }
+
+        const data = line.replace(/^data:\s?/, '').trim();
+        if (!data) {
+          return;
+        }
+
+        if (data === '[DONE]') {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(data);
+          const text = stripThink(resolveIncrementalVisibleText(parsed, emittedText));
+          if (!text) {
+            return;
+          }
+          emittedText += text;
+          controller.enqueue(encoder.encode(createSseEvent(text)));
+        } catch {
+          controller.enqueue(encoder.encode(`${line}\n`));
+        }
+      };
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            processLine(line);
+          }
+        }
+
+        buffer += decoder.decode();
+        if (buffer) {
+          processLine(buffer);
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
 }
 
 export function onRequestOptions() {
@@ -78,7 +308,7 @@ export async function onRequestPost(context) {
 
     const { apiKey, model, baseUrl } = resolveEnv(context);
     if (!apiKey) {
-      return json({ error: 'MINIMAX_API_KEY is not configured' }, { status: 500 });
+      return json({ error: 'KIMI_API_KEY is not configured' }, { status: 500 });
     }
 
     const allMessages = [
@@ -101,10 +331,10 @@ export async function onRequestPost(context) {
 
     if (!upstream.ok) {
       const errorText = await upstream.text();
-      return json({ error: `MiniMax API error: ${errorText}` }, { status: upstream.status });
+      return json({ error: `Kimi API error: ${errorText}` }, { status: upstream.status });
     }
 
-    return new Response(upstream.body, {
+    return new Response(normalizeUpstreamSseStream(upstream.body), {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream; charset=UTF-8',

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { getChatApiUrl } from '@/lib/chat-api';
+import { resolveIncrementalVisibleText } from '@/lib/chat-stream';
 
 export interface Message {
   id: string;
@@ -74,6 +75,7 @@ export function useChat() {
       setMessages(messagesRef.current);
 
       const decoder = new TextDecoder();
+      let assistantRaw = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -83,25 +85,25 @@ export function useChat() {
         const lines = chunk.split('\n');
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
+          if (!line.startsWith('data:')) continue;
+          const data = line.replace(/^data:\s?/, '');
+          if (data === '[DONE]') continue;
 
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content || '';
-              if (delta) {
-                setMessages(prev =>
-                  prev.map(m =>
-                    m.id === assistantMessage.id
-                      ? { ...m, content: m.content + delta }
-                      : m
-                  )
-                );
-              }
-            } catch {
-              // 忽略无效的 SSE 数据帧
+          try {
+            const parsed = JSON.parse(data);
+            const delta = resolveIncrementalVisibleText(parsed, assistantRaw);
+            if (delta) {
+              assistantRaw += delta;
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === assistantMessage.id
+                    ? { ...m, content: m.content + delta }
+                    : m
+                )
+              );
             }
+          } catch {
+            // 忽略无效的 SSE 数据帧
           }
         }
       }

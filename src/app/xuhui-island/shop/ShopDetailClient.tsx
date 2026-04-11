@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import { CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { playAudioFile } from '@/lib/sound';
 import { getChatApiUrl } from '@/lib/chat-api';
+import { resolveIncrementalVisibleText } from '@/lib/chat-stream';
 import {
   type ShopActionId,
   type ShopMenuItem,
@@ -1022,11 +1023,17 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let assistantRaw = '';
       // 状态机：跨 chunk 过滤 <think>...</think> 思考内容
-      let inThink = false;    // 是否正在 <think> 块内
+      let inThink = false;      // 是否正在 <think> 块内
+      let tagBuf = '';          // 暂存可能是 <think> 开标签的不完整前缀
+
+      const OPEN_TAG = '<think>';
+      const CLOSE_TAG = '</think>';
 
       /**
        * 过滤掉思考内容：用状态机处理跨 chunk 的 <think>…</think>
+       * 同时处理 <think> 开标签被拆成多个 chunk 的情况（通过 tagBuf 缓冲）
        * 返回过滤后应该显示的文字
        */
       const filterThink = (raw: string): string => {
@@ -1035,30 +1042,49 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
         while (i < raw.length) {
           if (inThink) {
             // 在思考块内，找 </think>
-            const end = raw.indexOf('</think>', i);
+            const end = raw.indexOf(CLOSE_TAG, i);
             if (end === -1) {
-              // 本 chunk 没有结束标签，全部丢弃
-              i = raw.length;
+              i = raw.length; // 本 chunk 全部丢弃
             } else {
-              // 找到结束标签，跳过到标签之后
               inThink = false;
-              i = end + '</think>'.length;
+              i = end + CLOSE_TAG.length;
             }
           } else {
-            // 不在思考块内，找 <think>
-            const start = raw.indexOf('<think>', i);
-            if (start === -1) {
-              out += raw.slice(i);
-              i = raw.length;
+            // 先把上一个 chunk 遗留的 tagBuf 拼上当前字符逐一消费
+            const ch = raw[i];
+            tagBuf += ch;
+            i++;
+
+            if (OPEN_TAG.startsWith(tagBuf)) {
+              // tagBuf 是 <think> 的合法前缀
+              if (tagBuf === OPEN_TAG) {
+                // 完整匹配到开标签，进入思考块
+                inThink = true;
+                tagBuf = '';
+              }
+              // 否则继续等待下一个字符
             } else {
-              out += raw.slice(i, start);
-              inThink = true;
-              i = start + '<think>'.length;
+              // tagBuf 不是合法前缀，把它作为普通文本输出，然后重新尝试
+              // 注意：要用回溯方式逐字检查，防止 tagBuf 内部有新的 < 开头
+              out += tagBuf[0];
+              const rest = tagBuf.slice(1);
+              tagBuf = '';
+              // 把 rest 重新压回待处理（通过递归处理剩余的 tagBuf 内容）
+              if (rest) {
+                // 直接插入到 raw 剩余部分重新处理
+                const remaining = rest + raw.slice(i);
+                i = raw.length; // 停止当前循环
+                return out + filterThink(remaining);
+              }
             }
           }
         }
-        // 额外处理：过滤掉残留的完整 <think>...</think>（防御性）
-        out = out.replace(/<think>[\s\S]*?<\/think>/g, '');
+        // 循环结束：tagBuf 里可能还有不完整的 <think> 前缀，留到下一个 chunk
+        // 但如果 tagBuf 不是合法前缀的开头，直接输出（防止永久缓冲）
+        if (tagBuf && !OPEN_TAG.startsWith(tagBuf)) {
+          out += tagBuf;
+          tagBuf = '';
+        }
         return out;
       };
 
@@ -1070,18 +1096,16 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
+          if (!line.startsWith('data:')) continue;
+          const data = line.replace(/^data:\s?/, '').trim();
           if (data === '[DONE]') break;
           try {
-            const json = JSON.parse(data) as {
-              choices?: Array<{ delta?: { content?: string } }>;
-            };
-            let chunk = json.choices?.[0]?.delta?.content ?? '';
+            let chunk = resolveIncrementalVisibleText(JSON.parse(data) as unknown, assistantRaw);
             if (!chunk) continue;
+            assistantRaw += chunk;
 
             // 用状态机过滤思考内容（支持跨 chunk 的 <think>…</think>）
-            chunk = filterThink(chunk).trim();
+            chunk = filterThink(chunk);
             if (!chunk) continue;
 
             setChatMessagesByActor((current) => {
@@ -2507,7 +2531,9 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                                     lineHeight: 1.55,
                                     wordBreak: 'break-word',
                                   }}>
-                                    {msg.content}
+                                    {msg.role === 'assistant'
+                                      ? msg.content.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*/gi, '').trim()
+                                      : msg.content}
                                   </div>
                                 </div>
                               ))}
@@ -2751,7 +2777,9 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                                     lineHeight: 1.65,
                                     wordBreak: 'break-word',
                                   }}>
-                                    {msg.content}
+                                    {msg.role === 'assistant'
+                                      ? msg.content.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*/gi, '').trim()
+                                      : msg.content}
                                   </div>
                                 </div>
                               ))}

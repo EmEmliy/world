@@ -27,6 +27,6 @@ export function onRequestGet(context) {
     status: 'ok',
     runtime: 'edgeone-node-functions',
     timestamp: Date.now(),
-    hasApiKey: Boolean((context.env || {}).MINIMAX_API_KEY || process.env.MINIMAX_API_KEY),
+    hasApiKey: Boolean((context.env || {}).KIMI_API_KEY || process.env.KIMI_API_KEY),
   });
 }
