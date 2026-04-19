@@ -62,6 +62,13 @@ export interface XuhuiShop {
   size: number;
   baseVisitors: number;
   crowdLevel: 'normal' | 'busy' | 'packed';
+  /**
+   * EATI 4-bit 商家编码 [A'][B'][C'][D']
+   * A'=口味强度 B'=新奇度 C'=精致度 D'=决策复杂度（H=招牌突出/L=菜单丰富）
+   * D' 为反向映射：用户 D=H(纠结型) → 匹配商家 D'=H(招牌突出)
+   * 编码格式示例：'LLLH' | 'HHLH'
+   */
+  eatiCode: string;
   /** 营业开始小时 0-23 */
   openHour: number;
   /** 营业结束小时，>24 表示过凌晨，如 25 = 凌晨 1 点 */
@@ -106,6 +113,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 88,
     baseVisitors: 22,
     crowdLevel: 'normal',
+    // EATI: 清淡西式轻食(L) + 连锁常见(L) + 客单40平价(L) + 3个SPU招牌明确(H)
+    eatiCode: 'LLLH',
     openHour: 9,
     closeHour: 21,
     intro: '开放式西餐小馆，适合下午茶、早午餐和轻社交，招牌是高颜值甜品与轻食组合。',
@@ -163,6 +172,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 92,
     baseVisitors: 31,
     crowdLevel: 'packed',
+    // EATI: 沙茶重口(H) + 厦门菜小众独立店(H) + 客单52大众(L) + 3个SPU选择简单(H)
+    eatiCode: 'HHLH',
     openHour: 11,
     closeHour: 23,
     intro: '偏闽南烟火气的热炒馆，晚餐时段最热闹，招牌海鲜和沙茶味很冲。',
@@ -221,6 +232,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 94,
     baseVisitors: 28,
     crowdLevel: 'busy',
+    // EATI: 台州菜温和不辣(L) + 新台州稀缺独立(H) + 烤鸭92+精致包厢(H) + 20个SPU菜单丰富(L)
+    eatiCode: 'LHHL',
     openHour: 11,
     closeHour: 21,
     intro: '洋泾商圈江浙菜销量榜第1的新台州菜馆，评分高、聚餐套餐密度高，适合家庭聚餐、商务宴请和包厢多人局。',
@@ -310,6 +323,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 94,
     baseVisitors: 26,
     crowdLevel: 'busy',
+    // EATI: 港式点心清淡(L) + 蔡澜连锁大众品类(L) + 客单25平价(L) + 3个SPU招牌清晰(H)
+    eatiCode: 'LLLH',
     openHour: 9,
     closeHour: 21,
     intro: '偏港式茶楼感，蒸笼区和点心车是核心体验，适合逛一圈再慢慢点。',
@@ -362,6 +377,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 92,
     baseVisitors: 34,
     crowdLevel: 'packed',
+    // EATI: 油爆虾甜口非辣(L) + 杭帮菜独立店小众(H) + 招牌88+精致工艺(H) + 3个SPU极简(H)
+    eatiCode: 'LHHH',
     openHour: 10,
     closeHour: 22,
     intro: '招牌油爆虾和家常热菜都很能打，晚餐高峰翻台快，现场烟火气最足。',
@@ -418,6 +435,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 96,
     baseVisitors: 29,
     crowdLevel: 'busy',
+    // EATI: 青花椒辣味重口(H) + 江边城外全国连锁(L) + 4.2分+客单87精致(H) + 4个SPU招牌突出(H)
+    eatiCode: 'HLHH',
     openHour: 10,
     closeHour: 22,
     intro: '活鱼现烤·多口味川味烤鱼，适合朋友聚餐，鱼锅和配菜越煮越热闹。综合评分 4.2，4448 条真实评价。',
@@ -496,6 +515,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 92,
     baseVisitors: 24,
     crowdLevel: 'busy',
+    // EATI: 湘辣重口(H) + 蛙来哒全国连锁(L) + 客单71+精致锅物(H) + 3个SPU极简(H)
+    eatiCode: 'HLHH',
     openHour: 11,
     closeHour: 26, // 凌晨 2 点
     intro: '牛蛙锅和香辣口味是主打，整体氛围活跃，年轻客群多，适合社交聚餐。',
@@ -554,6 +575,8 @@ export const XUHUI_SHOPS: XuhuiShop[] = [
     size: 98,
     baseVisitors: 21,
     crowdLevel: 'normal',
+    // EATI: 日式甜口温和(L) + 寿喜烧品类常见(L) + 寿喜锅108+精致定位(H) + 3个SPU极简(H)
+    eatiCode: 'LLHH',
     openHour: 11,
     closeHour: 22,
     intro: '偏温暖、慢节奏的寿喜烧场景，适合坐下慢慢煮，服务动作和食材上桌体验都很重要。',

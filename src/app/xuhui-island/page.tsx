@@ -5,6 +5,9 @@ import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { PageTracker } from '@/components/game/page-tracker';
 import { LobsterDispatchMenu } from '@/components/game/lobster-dispatch-menu';
+import { EatiQuiz } from '@/components/game/eati-quiz';
+import { EatiBadge } from '@/components/game/eati-badge';
+import { loadEatiResult, getPersonality, matchShops, type ShopMatchResult } from '@/lib/eati';
 import { getItem, setItem } from '@/lib/storage';
 import {
   DEFAULT_TRACE_STATE,
@@ -315,6 +318,10 @@ export default function XuhuiIslandPage() {
   const mapFeedbackTimerRef = useRef<number | null>(null);
   const memorialPromptShownRef = useRef(false);
   const firstDayDebugMode = parseFirstDayDebugMode(searchParams.get('firstDay'));
+  // EATI 测评相关状态
+  const [showEatiQuiz, setShowEatiQuiz] = useState(false);
+  const [eatiCode, setEatiCode] = useState<string | null>(null);
+  const [eatiMatchMap, setEatiMatchMap] = useState<Record<string, ShopMatchResult>>({});
 
   // 页面卸载时释放 AudioContext，防止内存泄漏
   useEffect(() => {
@@ -324,6 +331,29 @@ export default function XuhuiIslandPage() {
         window.clearTimeout(mapFeedbackTimerRef.current);
       }
     };
+  }, []);
+
+  // EATI：根据编码计算所有商家匹配结果并更新 matchMap
+  function buildEatiMatchMap(code: string) {
+    const shopInputs = XUHUI_SHOPS.map((s) => ({ id: s.id, name: s.name, eatiCode: s.eatiCode }));
+    const results = matchShops(code, shopInputs);
+    const map: Record<string, ShopMatchResult> = {};
+    results.forEach((r) => { map[r.shopId] = r; });
+    setEatiMatchMap(map);
+  }
+
+  // EATI：初始化从 localStorage 读取已有测评结果
+  useEffect(() => {
+    const saved = loadEatiResult();
+    if (saved) {
+      setEatiCode(saved.code);
+      buildEatiMatchMap(saved.code);
+    }
+    // URL 参数 ?eati=quiz 时自动弹出测评
+    if (searchParams.get('eati') === 'quiz') {
+      setShowEatiQuiz(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 客户端 mount 后，用真实时间修正 rating（避免 SSR 固定值 12 与实际时间不符）
@@ -1673,53 +1703,99 @@ export default function XuhuiIslandPage() {
                   style={{
                     marginBottom: 10,
                     display: 'flex',
+                    flexDirection: 'column',
                     alignItems: 'center',
-                    gap: 10,
-                    padding: '10px 16px',
-                    borderRadius: 999,
-                    background: 'rgba(8, 17, 24, 0.42)',
-                    border: '1px solid rgba(255,255,255,0.18)',
-                    boxShadow: '0 14px 28px rgba(10, 18, 28, 0.18)',
+                    gap: 0,
+                    padding: eatiMatchMap[shop.id] ? '8px 16px 10px' : '10px 16px',
+                    borderRadius: eatiMatchMap[shop.id] ? 20 : 999,
+                    background: eatiMatchMap[shop.id]?.grade === 'destiny'
+                      ? 'linear-gradient(135deg, rgba(255,200,60,0.32) 0%, rgba(255,120,30,0.22) 100%)'
+                      : eatiMatchMap[shop.id]?.grade === 'great'
+                      ? 'linear-gradient(135deg, rgba(255,140,40,0.22) 0%, rgba(255,80,20,0.14) 100%)'
+                      : 'rgba(8, 17, 24, 0.42)',
+                    border: eatiMatchMap[shop.id]?.grade === 'destiny'
+                      ? '1.5px solid rgba(255,211,110,0.7)'
+                      : eatiMatchMap[shop.id]?.grade === 'great'
+                      ? '1.5px solid rgba(255,150,50,0.55)'
+                      : '1px solid rgba(255,255,255,0.18)',
+                    boxShadow: eatiMatchMap[shop.id]?.grade === 'destiny'
+                      ? '0 0 20px rgba(255,200,60,0.35), 0 14px 28px rgba(10,18,28,0.18)'
+                      : eatiMatchMap[shop.id]?.grade === 'great'
+                      ? '0 0 14px rgba(255,140,40,0.25), 0 14px 28px rgba(10,18,28,0.18)'
+                      : '0 14px 28px rgba(10, 18, 28, 0.18)',
                     backdropFilter: 'blur(16px) saturate(1.08)',
                     WebkitBackdropFilter: 'blur(16px) saturate(1.08)',
                     color: '#fff7ef',
                     whiteSpace: 'nowrap',
+                    transition: 'all 300ms ease',
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 900,
-                      color: 'rgba(255,250,242,0.96)',
-                      textShadow: '0 1px 10px rgba(0,0,0,0.16)',
-                    }}
-                  >
-                    {shop.name}
-                  </span>
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      padding: '2px 0 0',
-                      color: 'rgba(230, 242, 240, 0.68)',
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: '0.08em',
-                    }}
-                  >
+                  {/* 第一行：店名 + 营业中 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span
                       style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: 'rgba(125, 232, 193, 0.82)',
-                        boxShadow: '0 0 8px rgba(125,232,193,0.32)',
-                        flexShrink: 0,
+                        fontSize: 16,
+                        fontWeight: 900,
+                        color: 'rgba(255,250,242,0.96)',
+                        textShadow: '0 1px 10px rgba(0,0,0,0.16)',
                       }}
-                    />
-                    营业中
-                  </span>
+                    >
+                      {shop.name}
+                    </span>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '2px 0 0',
+                        color: 'rgba(230, 242, 240, 0.68)',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: 'rgba(125, 232, 193, 0.82)',
+                          boxShadow: '0 0 8px rgba(125,232,193,0.32)',
+                          flexShrink: 0,
+                        }}
+                      />
+                      营业中
+                    </span>
+                  </div>
+                  {/* 第二行：EATI 匹配等级（有测评时显示）*/}
+                  {eatiMatchMap[shop.id] && (() => {
+                    const m = eatiMatchMap[shop.id];
+                    const GRADE_LABEL: Record<string, string> = {
+                      destiny: '🔥🔥🔥 天命之选',
+                      great: '🔥🔥 高度契合',
+                      good: '🔥 值得一试',
+                      contrast: '⚡ 反差体验',
+                      challenge: '💀 饭搭子带你去',
+                    };
+                    const GRADE_COLOR: Record<string, string> = {
+                      destiny: '#ffd36e',
+                      great: '#ffaa60',
+                      good: '#ffd36e',
+                      contrast: '#7de8e0',
+                      challenge: 'rgba(200,230,220,0.5)',
+                    };
+                    return (
+                      <div style={{
+                        marginTop: 5,
+                        fontSize: 12,
+                        fontWeight: 900,
+                        color: GRADE_COLOR[m.grade] ?? '#ffd36e',
+                        letterSpacing: '0.04em',
+                      }}>
+                        {GRADE_LABEL[m.grade]}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <span
@@ -1823,6 +1899,7 @@ export default function XuhuiIslandPage() {
                       filter: 'drop-shadow(0 28px 36px rgba(0,0,0,0.38)) saturate(1.08)',
                     }}
                   />
+                  {/* EATI 徽章已整合进店名胶囊，此处不再显示小圆圈 */}
                 </div>
               </button>
                 );
@@ -2711,6 +2788,120 @@ export default function XuhuiIslandPage() {
         isSharingStory={isSharingStory}
         leadVariant={leadLobster?.variant}
       />
+
+      {/* ── EATI 测评 Banner（未测评时）或人格快捷入口（已测评时）── */}
+      {journeyPhase === 'hidden' && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 88,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 30,
+            maxWidth: 420,
+            width: 'calc(100% - 32px)',
+          }}
+        >
+          {!eatiCode ? (
+            /* 未测评：引导 Banner */
+            <button
+              type="button"
+              onClick={() => setShowEatiQuiz(true)}
+              style={{
+                width: '100%',
+                padding: '12px 18px',
+                borderRadius: 999,
+                border: 0,
+                background: 'linear-gradient(135deg, rgba(255,211,110,0.9) 0%, rgba(255,150,50,0.85) 100%)',
+                color: '#503014',
+                fontSize: 14,
+                fontWeight: 900,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                boxShadow: '0 8px 28px rgba(255,160,60,0.36)',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ fontSize: 22 }}>🦞</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: 900 }}>
+                  旺财在等你 · 做完测评解锁专属推荐
+                </span>
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.7, marginTop: 1 }}>
+                  12 题 · 2 分钟 · 找到你的天命之店
+                </span>
+              </span>
+              <span style={{ fontSize: 16 }}>→</span>
+            </button>
+          ) : (
+            /* 已测评：显示人格快捷入口 */
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = `/xuhui-island/personality/${eatiCode}`;
+              }}
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                borderRadius: 999,
+                border: '1.5px solid rgba(255,211,110,0.4)',
+                background: 'rgba(3,14,24,0.82)',
+                color: '#ffd36e',
+                fontSize: 13,
+                fontWeight: 900,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+              }}
+            >
+              <span style={{ fontSize: 22 }}>{eatiCode ? getPersonality(eatiCode).emoji : '✦'}</span>
+              <span style={{ flex: 1, textAlign: 'left' }}>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: 900 }}>
+                  {eatiCode ? getPersonality(eatiCode).name : '你的人格'}
+                </span>
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.6, marginTop: 1 }}>
+                  查看天命之选
+                </span>
+              </span>
+              <span
+                style={{
+                  padding: '3px 10px',
+                  borderRadius: 999,
+                  background: 'linear-gradient(135deg, #ffd36e 0%, #ff9a44 100%)',
+                  color: '#503014',
+                  fontSize: 11,
+                  fontWeight: 900,
+                  flexShrink: 0,
+                }}
+              >
+                {eatiCode}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── EATI 测评弹窗 ── */}
+      {showEatiQuiz && (
+        <EatiQuiz
+          leadVariant={leadLobster?.variant}
+          onComplete={(code) => {
+            setEatiCode(code);
+            buildEatiMatchMap(code);
+            setShowEatiQuiz(false);
+            // 跳转到判决书
+            window.location.href = `/xuhui-island/personality/${code}`;
+          }}
+          onClose={() => setShowEatiQuiz(false)}
+        />
+      )}
 
       {firstDayState && firstDayReport ? (
         <div

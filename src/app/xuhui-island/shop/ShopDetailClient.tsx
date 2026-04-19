@@ -12,6 +12,7 @@ import {
   type XuhuiShop,
   XUHUI_SHOP_MAP,
 } from '@/config/xuhui-shops';
+import { loadEatiResult, matchShops, getPersonality, type EatiMatchGrade } from '@/lib/eati';
 
 type SceneActorRole = 'guest' | 'staff' | 'owner';
 
@@ -119,6 +120,272 @@ const SCENE_FOCUS_BY_ACTION: Record<ShopActionId, SceneView> = {
   'guest-chat': 'hall',
   'owner-chat': 'kitchen',
 };
+
+// ── EATI 匹配标签组件（Coze × 乔布斯极简版）───────────────────────────
+
+const GRADE_COZE_CONFIG: Record<EatiMatchGrade, {
+  accent: string;          // 顶部细线 & 进度环主色
+  accentSoft: string;      // 背景淡晕
+  accentBorder: string;    // 边框颜色
+  pill: string;            // 胶囊背景
+  pillColor: string;       // 胶囊文字
+  label: string;
+  desc: string;
+  ringTrack: string;       // 进度环底色
+}> = {
+  destiny: {
+    accent: '#F5A623',
+    accentSoft: 'rgba(245,166,35,0.07)',
+    accentBorder: 'rgba(245,166,35,0.25)',
+    pill: 'linear-gradient(90deg,#F5A623,#F7C948)',
+    pillColor: '#fff',
+    label: '👑 天命之选',
+    desc: '四维全中，这家就是为你开的。',
+    ringTrack: 'rgba(245,166,35,0.15)',
+  },
+  great: {
+    accent: '#2ECC9A',
+    accentSoft: 'rgba(46,204,154,0.06)',
+    accentBorder: 'rgba(46,204,154,0.22)',
+    pill: 'linear-gradient(90deg,#2ECC9A,#26de81)',
+    pillColor: '#fff',
+    label: '🔥 高度契合',
+    desc: '大概率会爱上这家！',
+    ringTrack: 'rgba(46,204,154,0.15)',
+  },
+  good: {
+    accent: '#4E9EF5',
+    accentSoft: 'rgba(78,158,245,0.05)',
+    accentBorder: 'rgba(78,158,245,0.2)',
+    pill: 'linear-gradient(90deg,#4E9EF5,#6ab0f5)',
+    pillColor: '#fff',
+    label: '✨ 值得一试',
+    desc: '有匹配的口味偏好，值得探索。',
+    ringTrack: 'rgba(78,158,245,0.15)',
+  },
+  contrast: {
+    accent: '#A55EEA',
+    accentSoft: 'rgba(165,94,234,0.06)',
+    accentBorder: 'rgba(165,94,234,0.22)',
+    pill: 'linear-gradient(90deg,#A55EEA,#8854d0)',
+    pillColor: '#fff',
+    label: '⚡ 反差体验',
+    desc: '也许正是今晚需要的惊喜？',
+    ringTrack: 'rgba(165,94,234,0.15)',
+  },
+  challenge: {
+    accent: '#B0B0B0',
+    accentSoft: 'rgba(0,0,0,0.03)',
+    accentBorder: 'rgba(0,0,0,0.1)',
+    pill: 'rgba(0,0,0,0.12)',
+    pillColor: '#888',
+    label: '🤝 饭搭子带你去',
+    desc: '饭搭子可能会爱上它。',
+    ringTrack: 'rgba(0,0,0,0.08)',
+  },
+};
+
+const EATI_DIM_LABELS: Record<string, { name: string; emoji: string }> = {
+  A: { name: '口味', emoji: '🌶️' },
+  B: { name: '探索欲', emoji: '🗺️' },
+  C: { name: '精细度', emoji: '✨' },
+  D: { name: '确定性', emoji: '🎯' },
+};
+
+/** SVG 圆形进度环 */
+function RingScore({ score, total = 4, color, trackColor }: {
+  score: number; total?: number; color: string; trackColor: string;
+}) {
+  const r = 20, cx = 26, cy = 26, strokeW = 4;
+  const circ = 2 * Math.PI * r;
+  const pct = score / total;
+  const dash = pct * circ;
+  return (
+    <svg width={52} height={52} style={{ flexShrink: 0 }}>
+      {/* 轨道 */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={trackColor} strokeWidth={strokeW} />
+      {/* 进度 */}
+      <circle cx={cx} cy={cy} r={r} fill="none"
+        stroke={color} strokeWidth={strokeW}
+        strokeDasharray={`${dash} ${circ}`}
+        strokeDashoffset={circ / 4}   /* 从顶部开始 */
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dasharray 0.6s cubic-bezier(.34,1.56,.64,1)' }}
+      />
+      {/* 中心数字 */}
+      <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle"
+        fontSize={15} fontWeight={900} fill={color}>{score}</text>
+      <text x={cx} y={cy + 12} textAnchor="middle" dominantBaseline="middle"
+        fontSize={8} fontWeight={600} fill={`${color}99`}>/4</text>
+    </svg>
+  );
+}
+
+function EatiMatchTag({ shopId, shopEatiCode }: { shopId: string; shopEatiCode?: string }) {
+  const [matchInfo, setMatchInfo] = useState<{
+    grade: EatiMatchGrade;
+    personalityEmoji: string;
+    personalityName: string;
+    eatiCode: string;
+    matchedDimensions: string[];
+    score: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!shopEatiCode) return;
+    const result = loadEatiResult();
+    if (!result) return;
+    const shopName = '';
+    const matches = matchShops(result.code, [{ id: shopId, name: shopName, eatiCode: shopEatiCode }]);
+    if (!matches[0]) return;
+    const m = matches[0];
+    const p = getPersonality(result.code);
+    setMatchInfo({
+      grade: m.grade,
+      personalityEmoji: p.emoji,
+      personalityName: p.name,
+      eatiCode: result.code,
+      matchedDimensions: m.matchedDimensions,
+      score: m.score,
+    });
+  }, [shopId, shopEatiCode]);
+
+  if (!matchInfo) return null;
+
+  const cfg = GRADE_COZE_CONFIG[matchInfo.grade];
+  const isDestiny = matchInfo.grade === 'destiny';
+  const dims = ['A', 'B', 'C', 'D'];
+
+  return (
+    <div style={{
+      borderRadius: 18,
+      background: `rgba(255,255,255,0.08)`,
+      border: `1px solid ${cfg.accentBorder}`,
+      overflow: 'hidden',
+      position: 'relative',
+      backdropFilter: 'blur(8px)',
+    }}>
+      {/* 顶部 accent 细线 */}
+      <div style={{
+        height: 3,
+        background: cfg.accent,
+        opacity: 0.85,
+        ...(isDestiny ? { animation: 'eati-accent-shimmer 2.4s linear infinite', backgroundImage: `linear-gradient(90deg,${cfg.accent}00,${cfg.accent},${cfg.accent}00)`, backgroundSize: '200% 100%' } : {}),
+      }} />
+
+      <div style={{ padding: '14px 16px 16px', background: cfg.accentSoft }}>
+        {/* ── 第一行：人格 + 胶囊 + 进度环 ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          {/* 人格 emoji 小头像 */}
+          <div style={{
+            width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+            background: 'rgba(255,255,255,0.18)',
+            border: `1px solid ${cfg.accentBorder}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 22,
+          }}>
+            {matchInfo.personalityEmoji}
+          </div>
+
+          {/* 中间：人格名 + 胶囊 */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center',
+              padding: '3px 10px', borderRadius: 999,
+              background: cfg.pill, color: cfg.pillColor,
+              fontSize: 11, fontWeight: 800, letterSpacing: '0.02em',
+              marginBottom: 4,
+            }}>
+              {cfg.label}
+            </div>
+            <div style={{
+              fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: 600,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {matchInfo.personalityName} · {matchInfo.eatiCode}
+            </div>
+          </div>
+
+          {/* 进度环 */}
+          <RingScore score={matchInfo.score} color={cfg.accent} trackColor={cfg.ringTrack} />
+        </div>
+
+        {/* ── 第二行：4维度水平条 ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {dims.map((dim) => {
+            const matched = matchInfo.matchedDimensions.includes(dim);
+            const dimInfo = EATI_DIM_LABELS[dim];
+            return (
+              <div key={dim} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                opacity: matched ? 1 : 0.35,
+                transition: 'opacity 200ms ease',
+              }}>
+                <span style={{ fontSize: 12, width: 18, textAlign: 'center', flexShrink: 0 }}>
+                  {dimInfo.emoji}
+                </span>
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: matched ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)',
+                  width: 42, flexShrink: 0,
+                }}>
+                  {dimInfo.name}
+                </span>
+                {/* 进度条 */}
+                <div style={{
+                  flex: 1, height: 4, borderRadius: 99,
+                  background: 'rgba(255,255,255,0.1)',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%', borderRadius: 99,
+                    background: matched ? cfg.accent : 'transparent',
+                    width: matched ? '100%' : '0%',
+                    transition: 'width 0.5s cubic-bezier(.34,1.56,.64,1)',
+                  }} />
+                </div>
+                {/* 状态点 */}
+                <div style={{
+                  width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+                  background: matched ? cfg.accent : 'rgba(255,255,255,0.1)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 9, color: '#fff', fontWeight: 900,
+                  transition: 'background 200ms ease',
+                }}>
+                  {matched ? '✓' : ''}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── 第三行：龙虾推荐语 ── */}
+        <div style={{
+          marginTop: 12,
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '8px 12px', borderRadius: 12,
+          background: 'rgba(255,255,255,0.06)',
+          border: '1px solid rgba(255,255,255,0.1)',
+        }}>
+          <span style={{ fontSize: 14, flexShrink: 0 }}>🦞</span>
+          <span style={{
+            fontSize: 12, fontWeight: 600,
+            color: 'rgba(255,255,255,0.65)', lineHeight: 1.5,
+          }}>
+            {cfg.desc}
+          </span>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes eati-accent-shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+      `}</style>
+    </div>
+  );
+}
 
 /** 根据菜系获取店铺主 icon */
 function getShopIcon(cuisine: string, shopId?: string): string {
@@ -1683,7 +1950,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                     {getShopIcon(shop.cuisine, shop.id)} {shop.name}
                   </h1>
                   <div style={{
-                    display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+                    display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap',
                   }}>
                     {/* 评分 */}
                     <div style={{
@@ -1718,6 +1985,11 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                 }}>
                   {shop.intro}
                 </p>
+
+                {/* EATI 匹配横幅（有测评时独立显示）*/}
+                <div style={{ marginTop: 12 }}>
+                  <EatiMatchTag shopId={shop.id} shopEatiCode={shop.eatiCode} />
+                </div>
 
                 {/* 实时客流数据条 */}
                 <div style={{
