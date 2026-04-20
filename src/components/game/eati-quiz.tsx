@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { EATI_QUESTIONS, calcEatiCode, saveEatiResult, type EatiAnswer } from '@/lib/eati';
+import { EATI_QUESTIONS, EATI_QUIZ_VERSION, calcEatiCode, saveEatiResult, type EatiAnswer } from '@/lib/eati';
 import { playAudioFile } from '@/lib/sound';
 import { track } from '@/lib/tracker';
 
@@ -24,7 +24,7 @@ interface EatiQuizProps {
   leadVariant?: string;
 }
 
-type QuizPhase = 'intro' | 'questions' | 'depart' | 'done';
+type QuizPhase = 'intro' | 'questions' | 'depart';
 
 const DIMENSION_LABELS: Record<string, string> = {
   A: '重口度', B: '探索欲', C: '精细度', D: '确定性',
@@ -155,14 +155,19 @@ function PawProgress({ total, current, answers }: {
 function DepartScene({ leadVariant, onDone }: { leadVariant?: string; onDone: () => void }) {
   const [step, setStep] = useState<'prepare' | 'run' | 'lights'>('prepare');
   const timerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   useEffect(() => {
     const t1 = setTimeout(() => setStep('run'), 600);
     const t2 = setTimeout(() => setStep('lights'), 1600);
-    const t3 = setTimeout(() => onDone(), 2800);
+    const t3 = setTimeout(() => onDoneRef.current(), 2800);
     timerRef.current = [t1, t2, t3];
     return () => timerRef.current.forEach(clearTimeout);
-  }, [onDone]);
+  }, []);
 
   // 餐厅灯光依次亮起的图标
   const restaurants = ['🍜', '🍣', '🍲', '🦞', '🥟', '🍰'];
@@ -367,9 +372,8 @@ export function EatiQuiz({ onComplete, onClose, leadVariant }: EatiQuizProps) {
 
   const handleDepartDone = useCallback(() => {
     const { code, skippedCount } = calcEatiCode(answers);
-    saveEatiResult({ code, skippedCount, answeredAt: Date.now() });
+    saveEatiResult({ code, skippedCount, answeredAt: Date.now(), version: EATI_QUIZ_VERSION });
     track('eati_personality_assigned', { code, skippedCount });
-    setPhase('done');
     onComplete(code);
   }, [answers, onComplete]);
 

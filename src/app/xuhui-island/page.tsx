@@ -70,6 +70,78 @@ const FIRST_DAY_STORAGE_KEY = 'xuhui_island_first_day_v1';
 const FIRST_DAY_OPENING_MS = 2200;
 const FIRST_DAY_REPORT_DELAY_MS = 45_000;
 
+const MAP_MATCH_THEME: Record<
+  ShopMatchResult['grade'],
+  {
+    icon: string;
+    label: string;
+    accent: string;
+    accentBorder: string;
+    panelBg: string;
+    badgeBg: string;
+    textColor: string;
+    glowColor: string;
+  }
+> = {
+  destiny: {
+    icon: '👑',
+    label: '天命之选',
+    accent: '#ffd36e',
+    accentBorder: 'rgba(255,211,110,0.72)',
+    panelBg: 'linear-gradient(140deg, rgba(255,210,120,0.34) 0%, rgba(255,150,45,0.2) 100%)',
+    badgeBg: 'linear-gradient(135deg, rgba(28,18,4,0.95) 0%, rgba(44,26,4,0.96) 100%)',
+    textColor: '#ffd36e',
+    glowColor: 'rgba(255,211,110,0.55)',
+  },
+  great: {
+    icon: '🔥',
+    label: '高度契合',
+    accent: '#3de8b4',
+    accentBorder: 'rgba(61,232,180,0.72)',
+    panelBg: 'linear-gradient(140deg, rgba(43,207,161,0.26) 0%, rgba(7,31,38,0.72) 100%)',
+    badgeBg: 'linear-gradient(135deg, rgba(4,26,20,0.96) 0%, rgba(6,36,28,0.97) 100%)',
+    textColor: '#3de8b4',
+    glowColor: 'rgba(61,232,180,0.52)',
+  },
+  good: {
+    icon: '🌟',
+    label: '值得一试',
+    accent: '#f9c846',
+    accentBorder: 'rgba(249,200,70,0.68)',
+    panelBg: 'linear-gradient(140deg, rgba(255,211,110,0.22) 0%, rgba(42,28,8,0.48) 100%)',
+    badgeBg: 'linear-gradient(135deg, rgba(28,20,4,0.96) 0%, rgba(38,26,4,0.96) 100%)',
+    textColor: '#f9c846',
+    glowColor: 'rgba(249,200,70,0.48)',
+  },
+  contrast: {
+    icon: '⚡️',
+    label: '反差体验',
+    accent: '#ff6b5e',
+    accentBorder: 'rgba(255,107,94,0.7)',
+    panelBg: 'linear-gradient(140deg, rgba(255,115,92,0.22) 0%, rgba(48,14,10,0.52) 100%)',
+    badgeBg: 'linear-gradient(135deg, rgba(28,8,6,0.96) 0%, rgba(38,12,8,0.97) 100%)',
+    textColor: '#ff6b5e',
+    glowColor: 'rgba(255,107,94,0.5)',
+  },
+  challenge: {
+    icon: '🤝',
+    label: '饭搭子路线',
+    accent: '#c8b09a',
+    accentBorder: 'rgba(200,176,154,0.5)',
+    panelBg: 'linear-gradient(140deg, rgba(176,154,135,0.18) 0%, rgba(20,20,24,0.72) 100%)',
+    badgeBg: 'linear-gradient(135deg, rgba(20,16,14,0.94) 0%, rgba(28,22,18,0.95) 100%)',
+    textColor: '#c8b09a',
+    glowColor: 'rgba(200,176,154,0.35)',
+  },
+};
+
+const MAP_MATCH_DIMENSION_LABELS: Record<string, string> = {
+  A: '口味',
+  B: '探索',
+  C: '精致',
+  D: '决策',
+};
+
 type JourneyPhase = 'hidden' | 'opening' | 'intro' | 'questions' | 'report';
 type FirstDayDebugMode = Exclude<JourneyPhase, 'hidden'> | null;
 
@@ -78,6 +150,12 @@ interface FirstDayState extends FirstDayAnswers {
   firstShopId: string;
   reportReadyAt: number;
   reportViewedAt?: number;
+}
+
+interface EatiRevealState {
+  code: string;
+  countdown: number;
+  targetShopIds: string[];
 }
 
 const DEBUG_FIRST_DAY_ANSWERS: FirstDayAnswers = {
@@ -145,7 +223,7 @@ function chooseFirstDayShop(answers: FirstDayAnswers) {
   return 'azhong';
 }
 
-function getTimeLabel(hour = new Date().getHours()) {
+function getTimeLabel(hour = 12) {
   if (hour >= 6 && hour < 10) return '清晨落岛';
   if (hour >= 10 && hour < 15) return '午间巡岛';
   if (hour >= 15 && hour < 19) return '傍晚看海';
@@ -283,6 +361,7 @@ export default function XuhuiIslandPage() {
   const [lobsters, setLobsters] = useState<LobsterWalker[]>(createInitialLobsters);
   const [soundEnabled, setSoundEnabled] = useState(true); // 默认显示已开启，首次交互后真正播放
   const [hoveredShopId, setHoveredShopId] = useState<string | null>(null);
+  const [expandedShopId, setExpandedShopId] = useState<string | null>(null);
   const [hoveredLobsterId, setHoveredLobsterId] = useState<string | null>(null);
   const [selectedLobsterId, setSelectedLobsterId] = useState<string | null>(null);
   const [boardSize, setBoardSize] = useState<BoardSize | null>(null); // null = 尚未测量，避免错误 scale 引发位移
@@ -306,7 +385,7 @@ export default function XuhuiIslandPage() {
     mood: '',
   });
   const [isSharingStory, setIsSharingStory] = useState(false);
-  const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
+  const [currentHour, setCurrentHour] = useState(12);
   const [traceState, setTraceState] = useState<TraceState>(DEFAULT_TRACE_STATE);
   const [traceShopId, setTraceShopId] = useState<string>(XUHUI_SHOPS[0]?.id ?? 'gaga');
   const [recommendationDraft, setRecommendationDraft] = useState('');
@@ -322,11 +401,15 @@ export default function XuhuiIslandPage() {
   const [showEatiQuiz, setShowEatiQuiz] = useState(false);
   const [eatiCode, setEatiCode] = useState<string | null>(null);
   const [eatiMatchMap, setEatiMatchMap] = useState<Record<string, ShopMatchResult>>({});
+  const [eatiReveal, setEatiReveal] = useState<EatiRevealState | null>(null);
+  const eatiRevealTimerRef = useRef<number[]>([]);
+  const isIslandPerformanceMode = showEatiQuiz || Boolean(eatiReveal);
 
   // 页面卸载时释放 AudioContext，防止内存泄漏
   useEffect(() => {
     return () => {
       disposeAudioContext();
+      eatiRevealTimerRef.current.forEach((timer) => window.clearTimeout(timer));
       if (mapFeedbackTimerRef.current) {
         window.clearTimeout(mapFeedbackTimerRef.current);
       }
@@ -340,6 +423,41 @@ export default function XuhuiIslandPage() {
     const map: Record<string, ShopMatchResult> = {};
     results.forEach((r) => { map[r.shopId] = r; });
     setEatiMatchMap(map);
+    return results;
+  }
+
+  function beginEatiReveal(code: string) {
+    const results = buildEatiMatchMap(code);
+    const topResults = results
+      .filter((result) => result.grade === 'destiny' || result.grade === 'great')
+      .slice(0, 5);
+    const targetShopIds = (topResults.length > 0 ? topResults : results.slice(0, 5)).map((result) => result.shopId);
+
+    eatiRevealTimerRef.current.forEach((timer) => window.clearTimeout(timer));
+    eatiRevealTimerRef.current = [];
+
+    setEatiReveal({
+      code,
+      countdown: 3,
+      targetShopIds,
+    });
+
+    eatiRevealTimerRef.current.push(
+      window.setTimeout(() => {
+        setEatiReveal((current) => (current ? { ...current, countdown: 2 } : null));
+      }, 1000)
+    );
+    eatiRevealTimerRef.current.push(
+      window.setTimeout(() => {
+        setEatiReveal((current) => (current ? { ...current, countdown: 1 } : null));
+      }, 2000)
+    );
+    eatiRevealTimerRef.current.push(
+      window.setTimeout(() => {
+        setEatiReveal(null);
+        router.push(`/xuhui-island/personality/${code}`);
+      }, 3200)
+    );
   }
 
   // EATI：初始化从 localStorage 读取已有测评结果
@@ -385,9 +503,13 @@ export default function XuhuiIslandPage() {
   }, []);
 
   useEffect(() => {
+    if (expandedShopId) {
+      setTraceShopId(expandedShopId);
+      return;
+    }
     if (!hoveredShopId) return;
     setTraceShopId(hoveredShopId);
-  }, [hoveredShopId]);
+  }, [expandedShopId, hoveredShopId]);
 
   useEffect(() => {
     setRecommendationDraft(traceState.recommendations[traceShopId]?.text ?? '');
@@ -519,6 +641,7 @@ export default function XuhuiIslandPage() {
 
 
   useEffect(() => {
+    if (isIslandPerformanceMode) return;
     const timer = window.setInterval(() => {
       const now = Date.now();
       const visitorDeltas = new Map<string, number>();
@@ -631,9 +754,10 @@ export default function XuhuiIslandPage() {
     }, 900);
 
     return () => window.clearInterval(timer);
-  }, [boardSize]);
+  }, [boardSize, isIslandPerformanceMode]);
 
   useEffect(() => {
+    if (isIslandPerformanceMode) return;
     const timer = window.setInterval(() => {
       const currentHour = new Date().getHours();
 
@@ -664,7 +788,7 @@ export default function XuhuiIslandPage() {
     }, 3800);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [isIslandPerformanceMode]);
 
   const toggleAmbientSound = () => {
     const av = ambientVideoRef.current;
@@ -682,6 +806,7 @@ export default function XuhuiIslandPage() {
   };
 
   const enterShop = (shop: XuhuiShop) => {
+    setExpandedShopId(null);
     const nextTraceState = recordShopVisit(shop.id);
     setTraceState(nextTraceState);
     track('xuhui_shop_enter', { shopId: shop.id, shopName: shop.name });
@@ -971,7 +1096,15 @@ export default function XuhuiIslandPage() {
   };
 
   return (
-    <main style={pageStyle}>
+    <main
+      style={pageStyle}
+      onClickCapture={(event) => {
+        const target = event.target as HTMLElement;
+        if (expandedShopId && !target.closest('[data-shop-card="true"]')) {
+          setExpandedShopId(null);
+        }
+      }}
+    >
       <PageTracker page="xuhui-island" />
       {/* 隐藏的背景音乐 video（map-bg-original.mp4 有声音轨），muted autoplay 启动后 unmute */}
       <video
@@ -1522,7 +1655,7 @@ export default function XuhuiIslandPage() {
                       background: 'radial-gradient(circle, rgba(255,200,80,0.28) 0%, rgba(255,160,40,0.14) 50%, transparent 75%)',
                       border: '2px solid rgba(255,200,80,0.55)',
                       boxShadow: '0 0 18px rgba(255,180,50,0.45), inset 0 0 12px rgba(255,200,80,0.2)',
-                      animation: 'lobster-ring-pulse 1.4s ease-in-out infinite',
+                      animation: isIslandPerformanceMode ? 'none' : 'lobster-ring-pulse 1.4s ease-in-out infinite',
                     }} />
                   ) : null}
 
@@ -1545,7 +1678,7 @@ export default function XuhuiIslandPage() {
                         border: '1px solid rgba(255,255,255,0.75)',
                         backdropFilter: 'blur(14px)',
                         WebkitBackdropFilter: 'blur(14px)',
-                        animation: 'npc-bubble-rise 3.8s ease-out forwards',
+                        animation: isIslandPerformanceMode ? 'none' : 'npc-bubble-rise 3.8s ease-out forwards',
                         pointerEvents: 'none',
                       }}
                     >
@@ -1593,7 +1726,7 @@ export default function XuhuiIslandPage() {
                       filter: (isSelected || isHoveredLobster)
                         ? 'drop-shadow(0 0 14px rgba(255,231,133,0.75)) drop-shadow(0 12px 20px rgba(0,0,0,0.22))'
                         : 'drop-shadow(0 12px 20px rgba(0,0,0,0.22))',
-                      animation: lobster.mode === 'resting' || lobster.mode === 'speaking'
+                      animation: !isIslandPerformanceMode && (lobster.mode === 'resting' || lobster.mode === 'speaking')
                         ? 'lobster-idle 5.8s ease-in-out infinite'
                         : 'none',
                     }}
@@ -1619,184 +1752,193 @@ export default function XuhuiIslandPage() {
                 const metric = shopMetrics[shop.id];
                 const displaySize = Math.round(shop.size * 2 * (shop.mapScale ?? 1));
                 const isHovered = hoveredShopId === shop.id;
+                const isExpanded = expandedShopId === shop.id;
+                const matchInfo = eatiMatchMap[shop.id];
+                const matchTheme = matchInfo ? MAP_MATCH_THEME[matchInfo.grade] : null;
+                const revealIndex = eatiReveal?.targetShopIds.indexOf(shop.id) ?? -1;
+                const isRevealHighlighted = revealIndex >= 0;
+                const isRevealActive = Boolean(eatiReveal && matchInfo);
+                const matchedDimensionText = matchInfo
+                  ? matchInfo.matchedDimensions.map((dimension) => MAP_MATCH_DIMENSION_LABELS[dimension]).join(' / ')
+                  : '';
+                const summaryLine = matchInfo
+                  ? `更合拍：${matchedDimensionText || '今晚气质对路'}`
+                  : '今晚先随便逛逛，再看旺财怎么推荐。';
 
                 return (
-              <button
+              <div
                 key={shop.id}
-                type="button"
-                aria-label={`进入${shop.name}`}
-                onClick={() => enterShop(shop)}
-                onMouseEnter={() => { setHoveredShopId(shop.id); playAudioFile('/longpaopao.mp3', 0.35); }}
-                onMouseLeave={() => setHoveredShopId((current) => (current === shop.id ? null : current))}
-                onFocus={() => setHoveredShopId(shop.id)}
-                onBlur={() => setHoveredShopId((current) => (current === shop.id ? null : current))}
+                data-shop-card="true"
                 style={{
                   position: 'absolute',
                   left: `calc(${shop.x}% + ${shop.mapOffsetX ?? 0}px)`,
                   top: `calc(${shop.y}% + ${shop.mapOffsetY ?? 0}px)`,
-                  zIndex: isHovered ? 8 : 4,
+                  zIndex: isExpanded || isHovered || isRevealHighlighted ? 8 : 4,
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   transform: 'translate(-50%, -50%)',
-                  border: 0,
-                  padding: 0,
-                  background: 'transparent',
-                  cursor: 'pointer',
                 }}
               >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 24,
-                    right: 'calc(100% - 18px)',
-                    minWidth: 220,
-                    opacity: isHovered ? 1 : 0,
-                    pointerEvents: 'none',
-                    transform: `translateY(${isHovered ? 0 : 10}px) scale(${isHovered ? 1 : 0.96})`,
-                    transition: 'opacity 260ms ease, transform 260ms ease',
-                    ...metricGlassStyle,
-                    textAlign: 'left',
-                    animation: `metric-bob 4.8s ease-in-out ${(hashShopId(shop.id) % 5) * 0.3}s infinite`,
-                  }}
-                >
-                  <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.2 }}>{`《 ${shop.name} 》`}</div>
-                  <div style={{ marginTop: 6, fontSize: 12, fontWeight: 800 }}>
-                    在店人数：
-                    <span className="metric-value" style={{ marginLeft: 2, color: '#2f7de1' }}>
-                      {metric?.visitorCount ?? shop.baseVisitors}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 12, fontWeight: 800 }}>
-                    今日星级：{renderStars(metric?.rating ?? 5)}{' '}
-                    <span className="metric-value" style={{ color: '#2f7de1' }}>
-                      {(metric?.rating ?? 5).toFixed(1)}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 12, fontWeight: 800 }}>
-                    福利餐剩余：
-                    <span className="metric-value" style={{ marginLeft: 2, color: '#2f7de1' }}>
-                      {metric?.welfareLeft ?? 0}
-                    </span>{' '}
-                    份
-                  </div>
-                  {traceState.recommendations[shop.id] ? (
-                    <div
-                      style={{
-                        marginTop: 7,
-                        paddingTop: 7,
-                        borderTop: '1px solid rgba(255,255,255,0.08)',
-                        fontSize: 12,
-                        lineHeight: 1.5,
-                        color: 'rgba(224,245,240,0.86)',
-                      }}
-                    >
-                      <span style={{ color: '#7eeee0', fontWeight: 900 }}>
-                        {traceState.recommendations[shop.id]?.authorName}
+                {isExpanded ? (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 18,
+                      right: 'calc(100% - 10px)',
+                      minWidth: 228,
+                      maxWidth: 252,
+                      ...metricGlassStyle,
+                      textAlign: 'left',
+                      padding: '14px 15px',
+                      animation: isIslandPerformanceMode ? 'none' : `metric-bob 4.8s ease-in-out ${(hashShopId(shop.id) % 5) * 0.3}s infinite`,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.2 }}>{shop.name}</div>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          color: 'rgba(230, 242, 240, 0.72)',
+                          letterSpacing: '0.08em',
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: 'rgba(125, 232, 193, 0.82)',
+                            boxShadow: '0 0 8px rgba(125,232,193,0.32)',
+                            flexShrink: 0,
+                          }}
+                        />
+                        营业中
                       </span>
-                      {` 留下的话：${traceState.recommendations[shop.id]?.text}`}
                     </div>
-                  ) : null}
-                </div>
+                    <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: 'rgba(231,245,240,0.88)' }}>
+                      {summaryLine}
+                    </div>
+                    <div style={{ marginTop: 8, display: 'grid', gap: 5, fontSize: 12, color: 'rgba(224,245,240,0.82)' }}>
+                      <div>今日星级：<span className="metric-value" style={{ color: '#2f7de1' }}>{(metric?.rating ?? 5).toFixed(1)}</span></div>
+                      <div>在店人数：<span className="metric-value" style={{ color: '#2f7de1' }}>{metric?.visitorCount ?? shop.baseVisitors}</span></div>
+                      <div>福利餐剩余：<span className="metric-value" style={{ color: '#2f7de1' }}>{metric?.welfareLeft ?? 0}</span> 份</div>
+                    </div>
+                    {traceState.recommendations[shop.id] ? (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          paddingTop: 8,
+                          borderTop: '1px solid rgba(255,255,255,0.08)',
+                          fontSize: 12,
+                          lineHeight: 1.55,
+                          color: 'rgba(224,245,240,0.82)',
+                        }}
+                      >
+                        <span style={{ color: '#7eeee0', fontWeight: 900 }}>
+                          {traceState.recommendations[shop.id]?.authorName}
+                        </span>
+                        {` 留下的话：${traceState.recommendations[shop.id]?.text}`}
+                      </div>
+                    ) : null}
+                    <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: 'rgba(211,232,228,0.56)' }}>
+                      点下面的店铺建筑直接进店
+                    </div>
+                  </div>
+                ) : null}
 
-                <div
+                <button
+                  type="button"
+                  aria-label={`${shop.name}匹配信息`}
+                  aria-expanded={isExpanded}
+                  onClick={() => {
+                    playAudioFile('/longpaopao.mp3', 0.35);
+                    setExpandedShopId((current) => (current === shop.id ? null : shop.id));
+                  }}
+                  onMouseEnter={() => setHoveredShopId(shop.id)}
+                  onMouseLeave={() => setHoveredShopId((current) => (current === shop.id ? null : current))}
+                  onFocus={() => setHoveredShopId(shop.id)}
+                  onBlur={() => setHoveredShopId((current) => (current === shop.id ? null : current))}
                   style={{
+                    position: 'relative',
                     marginBottom: 10,
                     display: 'flex',
                     flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 0,
-                    padding: eatiMatchMap[shop.id] ? '8px 16px 10px' : '10px 16px',
-                    borderRadius: eatiMatchMap[shop.id] ? 20 : 999,
-                    background: eatiMatchMap[shop.id]?.grade === 'destiny'
-                      ? 'linear-gradient(135deg, rgba(255,200,60,0.32) 0%, rgba(255,120,30,0.22) 100%)'
-                      : eatiMatchMap[shop.id]?.grade === 'great'
-                      ? 'linear-gradient(135deg, rgba(255,140,40,0.22) 0%, rgba(255,80,20,0.14) 100%)'
-                      : 'rgba(8, 17, 24, 0.42)',
-                    border: eatiMatchMap[shop.id]?.grade === 'destiny'
-                      ? '1.5px solid rgba(255,211,110,0.7)'
-                      : eatiMatchMap[shop.id]?.grade === 'great'
-                      ? '1.5px solid rgba(255,150,50,0.55)'
-                      : '1px solid rgba(255,255,255,0.18)',
-                    boxShadow: eatiMatchMap[shop.id]?.grade === 'destiny'
-                      ? '0 0 20px rgba(255,200,60,0.35), 0 14px 28px rgba(10,18,28,0.18)'
-                      : eatiMatchMap[shop.id]?.grade === 'great'
-                      ? '0 0 14px rgba(255,140,40,0.25), 0 14px 28px rgba(10,18,28,0.18)'
-                      : '0 14px 28px rgba(10, 18, 28, 0.18)',
-                    backdropFilter: 'blur(16px) saturate(1.08)',
-                    WebkitBackdropFilter: 'blur(16px) saturate(1.08)',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                    minWidth: 0,
+                    padding: 0,
+                    borderRadius: 0,
+                    border: 0,
+                    background: 'transparent',
+                    boxShadow: 'none',
                     color: '#fff7ef',
                     whiteSpace: 'nowrap',
-                    transition: 'all 300ms ease',
+                    transition: 'all 240ms ease',
+                    animation: 'none',
+                    transform: isRevealHighlighted ? 'translateY(-4px) scale(1.04)' : isExpanded ? 'translateY(-2px)' : 'none',
+                    cursor: 'pointer',
                   }}
                 >
-                  {/* 第一行：店名 + 营业中 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span
+                  <div style={{ minWidth: 0, textAlign: 'left' }}>
+                    <div
                       style={{
                         fontSize: 16,
                         fontWeight: 900,
-                        color: 'rgba(255,250,242,0.96)',
-                        textShadow: '0 1px 10px rgba(0,0,0,0.16)',
+                        color: '#ffffff',
+                        textShadow: '0 1px 0 rgba(111,50,14,0.95), 0 2px 12px rgba(255,136,42,0.55)',
+                        lineHeight: 1.08,
+                        letterSpacing: '0.01em',
                       }}
                     >
                       {shop.name}
-                    </span>
+                    </div>
+                  </div>
+
+                  {matchInfo ? (
                     <span
                       style={{
+                        position: 'relative',
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: 6,
-                        padding: '2px 0 0',
-                        color: 'rgba(230, 242, 240, 0.68)',
+                        gap: 7,
+                        padding: '8px 16px',
+                        borderRadius: 999,
+                        background: matchTheme?.badgeBg,
+                        border: `2px solid ${matchTheme?.accentBorder}`,
+                        color: matchTheme?.textColor,
+                        fontSize: 14,
+                        fontWeight: 900,
+                        letterSpacing: '0.04em',
+                        boxShadow: `0 0 0 1px rgba(0,0,0,0.5), 0 4px 20px rgba(0,0,0,0.7), 0 0 18px ${matchTheme?.glowColor ?? matchTheme?.accent}`,
+                        alignSelf: 'flex-start',
+                        textShadow: `0 0 12px ${matchTheme?.accent}cc`,
+                        transform: isRevealHighlighted ? 'scale(1.06)' : 'translateY(0)',
+                        overflow: 'hidden',
+                        backdropFilter: 'blur(8px)',
+                        WebkitBackdropFilter: 'blur(8px)',
+                      }}
+                    >
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>{matchTheme?.icon}</span>
+                      <span style={{ color: matchTheme?.textColor }}>{matchTheme?.label}</span>
+                    </span>
+                  ) : (
+                    <span
+                      style={{
                         fontSize: 10,
                         fontWeight: 700,
+                        color: 'rgba(230, 242, 240, 0.62)',
                         letterSpacing: '0.08em',
                       }}
                     >
-                      <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: '50%',
-                          background: 'rgba(125, 232, 193, 0.82)',
-                          boxShadow: '0 0 8px rgba(125,232,193,0.32)',
-                          flexShrink: 0,
-                        }}
-                      />
-                      营业中
+                      点开看详情
                     </span>
-                  </div>
-                  {/* 第二行：EATI 匹配等级（有测评时显示）*/}
-                  {eatiMatchMap[shop.id] && (() => {
-                    const m = eatiMatchMap[shop.id];
-                    const GRADE_LABEL: Record<string, string> = {
-                      destiny: '🔥🔥🔥 天命之选',
-                      great: '🔥🔥 高度契合',
-                      good: '🔥 值得一试',
-                      contrast: '⚡ 反差体验',
-                      challenge: '💀 饭搭子带你去',
-                    };
-                    const GRADE_COLOR: Record<string, string> = {
-                      destiny: '#ffd36e',
-                      great: '#ffaa60',
-                      good: '#ffd36e',
-                      contrast: '#7de8e0',
-                      challenge: 'rgba(200,230,220,0.5)',
-                    };
-                    return (
-                      <div style={{
-                        marginTop: 5,
-                        fontSize: 12,
-                        fontWeight: 900,
-                        color: GRADE_COLOR[m.grade] ?? '#ffd36e',
-                        letterSpacing: '0.04em',
-                      }}>
-                        {GRADE_LABEL[m.grade]}
-                      </div>
-                    );
-                  })()}
-                </div>
+                  )}
+                </button>
 
                 <span
                   style={{
@@ -1840,7 +1982,7 @@ export default function XuhuiIslandPage() {
                         borderRadius: '50%',
                         background: 'radial-gradient(circle, rgba(255,255,255,0.52) 0%, rgba(255,255,255,0.24) 52%, rgba(255,255,255,0) 100%)',
                         filter: 'blur(6px)',
-                        animation: `steam-rise 5.6s ease-out ${index * 0.8}s infinite`,
+                        animation: isIslandPerformanceMode ? 'none' : `steam-rise 5.6s ease-out ${index * 0.8}s infinite`,
                         opacity: 0.82,
                       }}
                     />
@@ -1871,14 +2013,28 @@ export default function XuhuiIslandPage() {
                   border: '1.5px solid rgba(80,200,180,0.25)',
                   pointerEvents: 'none',
                   zIndex: 1,
-                  animation: `ripple-expand ${5.8 + (hashShopId(shop.id) % 3) * 0.8}s ease-out ${(hashShopId(shop.id) % 4) * 0.7}s infinite`,
+                  animation: isIslandPerformanceMode ? 'none' : `ripple-expand ${5.8 + (hashShopId(shop.id) % 3) * 0.8}s ease-out ${(hashShopId(shop.id) % 4) * 0.7}s infinite`,
                 }} />
                 {/* 浮动动画包裹层：island-bob 在此层，不干扰图片的 hover transform */}
+                <button
+                  type="button"
+                  aria-label={`进入${shop.name}`}
+                  onClick={() => enterShop(shop)}
+                  onMouseEnter={() => setHoveredShopId(shop.id)}
+                  onMouseLeave={() => setHoveredShopId((current) => (current === shop.id ? null : current))}
+                  style={{
+                    display: 'block',
+                    border: 0,
+                    padding: 0,
+                    background: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                >
                 <div style={{
                   display: 'block',
                   width: displaySize,
                   height: displaySize,
-                  animation: `island-bob ${8.2 + (hashShopId(shop.id) % 3) * 0.8}s ease-in-out ${(hashShopId(shop.id) % 5) * 0.45}s infinite`,
+                  animation: isIslandPerformanceMode ? 'none' : `island-bob ${8.2 + (hashShopId(shop.id) % 3) * 0.8}s ease-in-out ${(hashShopId(shop.id) % 5) * 0.45}s infinite`,
                   position: 'relative',
                   zIndex: 2,
                 }}>
@@ -1901,7 +2057,8 @@ export default function XuhuiIslandPage() {
                   />
                   {/* EATI 徽章已整合进店名胶囊，此处不再显示小圆圈 */}
                 </div>
-              </button>
+                </button>
+              </div>
                 );
               })()
             ))}
@@ -2576,6 +2733,55 @@ export default function XuhuiIslandPage() {
           }
         }
 
+        @keyframes eati-stamp-drop {
+          0% {
+            opacity: 0;
+            transform: translateY(-18px) scale(0.78) rotate(-18deg);
+          }
+          68% {
+            opacity: 1;
+            transform: translateY(4px) scale(1.08) rotate(-8deg);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1) rotate(-10deg);
+          }
+        }
+
+        @keyframes eati-chip-light {
+          0%, 100% {
+            transform: translateY(0) scale(1);
+            box-shadow: 0 0 0 rgba(255,255,255,0);
+          }
+          50% {
+            transform: translateY(-2px) scale(1.04);
+            box-shadow: 0 8px 24px rgba(255,210,130,0.18);
+          }
+        }
+
+        @keyframes eati-relationship-glow {
+          0%, 100% {
+            box-shadow: 0 18px 34px rgba(10,18,28,0.22), 0 0 0 1px rgba(255,255,255,0.04), 0 0 10px rgba(255,220,120,0.08);
+          }
+          50% {
+            box-shadow: 0 22px 38px rgba(10,18,28,0.28), 0 0 0 1px rgba(255,255,255,0.08), 0 0 26px rgba(255,220,120,0.24);
+          }
+        }
+
+        @keyframes eati-relationship-ring {
+          0% {
+            opacity: 0.18;
+            transform: scale(0.92);
+          }
+          70% {
+            opacity: 0.68;
+          }
+          100% {
+            opacity: 0;
+            transform: scale(1.12);
+          }
+        }
+
         @keyframes lobster-ring-pulse {
           0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
           50% { transform: translate(-50%, -50%) scale(1.08); opacity: 0.75; }
@@ -2790,7 +2996,7 @@ export default function XuhuiIslandPage() {
       />
 
       {/* ── EATI 测评 Banner（未测评时）或人格快捷入口（已测评时）── */}
-      {journeyPhase === 'hidden' && (
+      {journeyPhase === 'hidden' && !eatiReveal && (
         <div
           style={{
             position: 'fixed',
@@ -2888,16 +3094,107 @@ export default function XuhuiIslandPage() {
         </div>
       )}
 
+      {eatiReveal ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 85,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            background: 'radial-gradient(circle at center, rgba(10,18,30,0.18) 0%, rgba(7,12,18,0.5) 60%, rgba(7,12,18,0.7) 100%)',
+          }}
+        >
+          <div
+            style={{
+              width: 'min(560px, calc(100% - 32px))',
+              padding: '26px 26px 24px',
+              borderRadius: 30,
+              border: '1px solid rgba(255,223,182,0.18)',
+              background: 'linear-gradient(180deg, rgba(13,22,31,0.92) 0%, rgba(8,15,24,0.94) 100%)',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.34)',
+              backdropFilter: 'blur(18px)',
+              WebkitBackdropFilter: 'blur(18px)',
+              textAlign: 'center',
+              color: '#fff3df',
+            }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.26em', color: 'rgba(255,220,170,0.62)' }}>
+              WANGCAI HAS YOUR STAMP
+            </div>
+            <div
+              style={{
+                margin: '18px auto 0',
+                width: 148,
+                height: 148,
+                borderRadius: '50%',
+                border: '6px double rgba(255,212,120,0.74)',
+                background: 'radial-gradient(circle at 35% 35%, rgba(255,224,170,0.26), rgba(255,152,0,0.12) 52%, rgba(255,255,255,0.04) 100%)',
+                boxShadow: '0 0 0 10px rgba(255,170,64,0.08), 0 24px 54px rgba(0,0,0,0.22)',
+                display: 'grid',
+                placeItems: 'center',
+                transform: 'rotate(-10deg)',
+                animation: 'eati-stamp-drop 0.55s cubic-bezier(.2,1.15,.35,1) both',
+              }}
+            >
+              <div style={{ transform: 'rotate(10deg)' }}>
+                <div style={{ fontSize: 38, lineHeight: 1 }}>{getPersonality(eatiReveal.code).emoji}</div>
+                <div style={{ marginTop: 6, fontSize: 14, fontWeight: 900, color: '#ffd888', letterSpacing: '0.08em' }}>
+                  {eatiReveal.code}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 20, fontSize: 'clamp(24px, 4vw, 34px)', fontWeight: 900, lineHeight: 1.15 }}>
+              你是 <span style={{ color: '#ffd36e' }}>{getPersonality(eatiReveal.code).name}</span>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 15, lineHeight: 1.75, color: 'rgba(255,236,212,0.72)' }}>
+              旺财正在把你和岛上店铺的关系点亮。
+              <br />
+              当前题库下的匹配关系已刷新，{eatiReveal.countdown} 秒后自动进入人格判决页。
+            </div>
+
+            <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {eatiReveal.targetShopIds.map((shopId, index) => {
+                const shop = XUHUI_SHOPS.find((item) => item.id === shopId);
+                const match = eatiMatchMap[shopId];
+                const theme = match ? MAP_MATCH_THEME[match.grade] : null;
+                if (!shop || !match || !theme) return null;
+                return (
+                  <div
+                    key={`reveal-${shopId}`}
+                    style={{
+                      padding: '9px 12px',
+                      borderRadius: 999,
+                      border: `1px solid ${theme.accentBorder}`,
+                      background: theme.badgeBg,
+                      color: theme.textColor,
+                      fontSize: 12,
+                      fontWeight: 900,
+                      letterSpacing: '0.02em',
+                      animation: `eati-chip-light 1.5s ease-in-out ${index * 0.16}s infinite`,
+                    }}
+                  >
+                    {theme.icon} {shop.name}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* ── EATI 测评弹窗 ── */}
       {showEatiQuiz && (
         <EatiQuiz
           leadVariant={leadLobster?.variant}
           onComplete={(code) => {
             setEatiCode(code);
-            buildEatiMatchMap(code);
+            beginEatiReveal(code);
             setShowEatiQuiz(false);
-            // 跳转到判决书
-            window.location.href = `/xuhui-island/personality/${code}`;
           }}
           onClose={() => setShowEatiQuiz(false)}
         />

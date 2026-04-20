@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { playAudioFile } from '@/lib/sound';
 import { getChatApiUrl } from '@/lib/chat-api';
 import { resolveIncrementalVisibleText } from '@/lib/chat-stream';
@@ -12,25 +12,29 @@ import {
   type XuhuiShop,
   XUHUI_SHOP_MAP,
 } from '@/config/xuhui-shops';
-import { loadEatiResult, matchShops, getPersonality, type EatiMatchGrade } from '@/lib/eati';
+import { loadEatiResult, matchShops, getPersonality, PERSONALITY_MAP, type EatiMatchGrade } from '@/lib/eati';
 
 type SceneActorRole = 'guest' | 'staff' | 'owner';
 
 /** 厨房岗位职称 */
 const KITCHEN_TITLES = ['1厨师傅', '2厨师傅', '3厨师傅', '切配师傅', '打荷师傅'];
 
-/** 厨房专属岗位锚点 */
+/** 厨房专属岗位锚点 — 每个岗位分布在厨房不同区域，确保厨师不重叠 */
 const KITCHEN_STATION_ANCHORS = [
-  // 炒菜区（右侧靠近灶台）
-  { x: 72, y: 62 },
-  { x: 80, y: 58 },
-  { x: 86, y: 66 },
-  // 切配区（中左）
-  { x: 52, y: 68 },
-  { x: 60, y: 72 },
-  // 传菜走廊
-  { x: 40, y: 64 },
-  { x: 30, y: 60 },
+  // slot 0：灶台区（右侧）
+  { x: 74, y: 65 },
+  // slot 1：切配区（中左）
+  { x: 48, y: 70 },
+  // slot 2：传菜走廊（中下）
+  { x: 62, y: 74 },
+  // slot 3：备菜台（左侧）
+  { x: 34, y: 66 },
+  // slot 4：蒸笼区（中上）
+  { x: 56, y: 58 },
+  // slot 5：冷藏区（右下）
+  { x: 82, y: 72 },
+  // slot 6：出餐口（中下走廊）
+  { x: 44, y: 76 },
 ];
 
 interface SceneActor {
@@ -134,54 +138,54 @@ const GRADE_COZE_CONFIG: Record<EatiMatchGrade, {
   ringTrack: string;       // 进度环底色
 }> = {
   destiny: {
-    accent: '#F5A623',
-    accentSoft: 'rgba(245,166,35,0.07)',
-    accentBorder: 'rgba(245,166,35,0.25)',
-    pill: 'linear-gradient(90deg,#F5A623,#F7C948)',
-    pillColor: '#fff',
+    accent: '#f6bc54',
+    accentSoft: 'rgba(246,188,84,0.16)',
+    accentBorder: 'rgba(246,188,84,0.34)',
+    pill: 'linear-gradient(135deg,#f5a53b,#ffd667)',
+    pillColor: '#432400',
     label: '👑 天命之选',
-    desc: '四维全中，这家就是为你开的。',
-    ringTrack: 'rgba(245,166,35,0.15)',
+    desc: '四维全中，这家像是专门等你出现。',
+    ringTrack: 'rgba(246,188,84,0.18)',
   },
   great: {
-    accent: '#2ECC9A',
-    accentSoft: 'rgba(46,204,154,0.06)',
-    accentBorder: 'rgba(46,204,154,0.22)',
-    pill: 'linear-gradient(90deg,#2ECC9A,#26de81)',
-    pillColor: '#fff',
+    accent: '#47e3b8',
+    accentSoft: 'rgba(71,227,184,0.16)',
+    accentBorder: 'rgba(71,227,184,0.28)',
+    pill: 'linear-gradient(135deg,#2bcfa1,#55efc4)',
+    pillColor: '#07281f',
     label: '🔥 高度契合',
-    desc: '大概率会爱上这家！',
-    ringTrack: 'rgba(46,204,154,0.15)',
+    desc: '口味很对路，今晚吃它大概率稳。',
+    ringTrack: 'rgba(71,227,184,0.18)',
   },
   good: {
-    accent: '#4E9EF5',
-    accentSoft: 'rgba(78,158,245,0.05)',
-    accentBorder: 'rgba(78,158,245,0.2)',
-    pill: 'linear-gradient(90deg,#4E9EF5,#6ab0f5)',
-    pillColor: '#fff',
+    accent: '#f5c253',
+    accentSoft: 'rgba(245,194,83,0.14)',
+    accentBorder: 'rgba(245,194,83,0.24)',
+    pill: 'linear-gradient(135deg,#f5b33b,#ffd667)',
+    pillColor: '#432400',
     label: '✨ 值得一试',
-    desc: '有匹配的口味偏好，值得探索。',
-    ringTrack: 'rgba(78,158,245,0.15)',
+    desc: '有几项关键命中，属于安全又有趣的选择。',
+    ringTrack: 'rgba(245,194,83,0.16)',
   },
   contrast: {
-    accent: '#A55EEA',
-    accentSoft: 'rgba(165,94,234,0.06)',
-    accentBorder: 'rgba(165,94,234,0.22)',
-    pill: 'linear-gradient(90deg,#A55EEA,#8854d0)',
-    pillColor: '#fff',
+    accent: '#ff846d',
+    accentSoft: 'rgba(255,132,109,0.14)',
+    accentBorder: 'rgba(255,132,109,0.28)',
+    pill: 'linear-gradient(135deg,#ff7c5f,#ff9c74)',
+    pillColor: '#3d1208',
     label: '⚡ 反差体验',
-    desc: '也许正是今晚需要的惊喜？',
-    ringTrack: 'rgba(165,94,234,0.15)',
+    desc: '不是标准答案，但可能会给你惊喜。',
+    ringTrack: 'rgba(255,132,109,0.16)',
   },
   challenge: {
-    accent: '#B0B0B0',
-    accentSoft: 'rgba(0,0,0,0.03)',
-    accentBorder: 'rgba(0,0,0,0.1)',
-    pill: 'rgba(0,0,0,0.12)',
-    pillColor: '#888',
+    accent: '#d4b9a4',
+    accentSoft: 'rgba(212,185,164,0.12)',
+    accentBorder: 'rgba(212,185,164,0.22)',
+    pill: 'linear-gradient(135deg, rgba(176,154,135,0.38), rgba(122,102,92,0.58))',
+    pillColor: '#fff4ea',
     label: '🤝 饭搭子带你去',
-    desc: '饭搭子可能会爱上它。',
-    ringTrack: 'rgba(0,0,0,0.08)',
+    desc: '你未必会先选它，但有人带着去也许就对了。',
+    ringTrack: 'rgba(212,185,164,0.14)',
   },
 };
 
@@ -192,31 +196,38 @@ const EATI_DIM_LABELS: Record<string, { name: string; emoji: string }> = {
   D: { name: '确定性', emoji: '🎯' },
 };
 
-/** SVG 圆形进度环 */
+/** SVG 圆形进度环 — Phil Duncan R2 升级版：双环+外光晕 */
 function RingScore({ score, total = 4, color, trackColor }: {
   score: number; total?: number; color: string; trackColor: string;
 }) {
-  const r = 20, cx = 26, cy = 26, strokeW = 4;
+  const r = 22, cx = 30, cy = 30, strokeW = 5;
   const circ = 2 * Math.PI * r;
   const pct = score / total;
   const dash = pct * circ;
   return (
-    <svg width={52} height={52} style={{ flexShrink: 0 }}>
+    <svg width={60} height={60} style={{ flexShrink: 0, overflow: 'visible' }}>
+      {/* 外光晕（满分时更亮） */}
+      {pct >= 0.75 && (
+        <circle cx={cx} cy={cy} r={r + 5} fill="none"
+          stroke={color} strokeWidth={2}
+          opacity={0.18}
+        />
+      )}
       {/* 轨道 */}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke={trackColor} strokeWidth={strokeW} />
-      {/* 进度 */}
+      {/* 进度弧 */}
       <circle cx={cx} cy={cy} r={r} fill="none"
         stroke={color} strokeWidth={strokeW}
         strokeDasharray={`${dash} ${circ}`}
-        strokeDashoffset={circ / 4}   /* 从顶部开始 */
+        strokeDashoffset={circ / 4}
         strokeLinecap="round"
-        style={{ transition: 'stroke-dasharray 0.6s cubic-bezier(.34,1.56,.64,1)' }}
+        style={{ transition: 'stroke-dasharray 0.7s cubic-bezier(.34,1.56,.64,1)', filter: `drop-shadow(0 0 4px ${color}80)` }}
       />
-      {/* 中心数字 */}
+      {/* 中心大数字 */}
       <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle"
-        fontSize={15} fontWeight={900} fill={color}>{score}</text>
-      <text x={cx} y={cy + 12} textAnchor="middle" dominantBaseline="middle"
-        fontSize={8} fontWeight={600} fill={`${color}99`}>/4</text>
+        fontSize={18} fontWeight={900} fill={color}>{score}</text>
+      <text x={cx} y={cy + 13} textAnchor="middle" dominantBaseline="middle"
+        fontSize={9} fontWeight={600} fill={`${color}88`}>/4</text>
     </svg>
   );
 }
@@ -250,130 +261,236 @@ function EatiMatchTag({ shopId, shopEatiCode }: { shopId: string; shopEatiCode?:
     });
   }, [shopId, shopEatiCode]);
 
-  if (!matchInfo) return null;
+  // R2：未测评空态 — 更友好的引导设计
+  if (!matchInfo) return (
+    <div style={{
+      borderRadius: 22,
+      background: 'linear-gradient(145deg, rgba(255,200,80,0.09) 0%, rgba(20,14,10,0.92) 72%)',
+      border: '1px solid rgba(255,190,70,0.2)',
+      overflow: 'hidden',
+      position: 'relative',
+      backdropFilter: 'blur(16px)',
+      boxShadow: '0 16px 36px rgba(0,0,0,0.24)',
+    }}>
+      <div style={{ height: 3, background: 'linear-gradient(90deg, rgba(255,200,80,0.7), rgba(255,140,40,0.4), rgba(255,255,255,0.06))', opacity: 0.85 }} />
+      <div style={{ padding: '18px 18px 20px' }}>
+        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', color: 'rgba(255,231,204,0.42)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'rgba(255,200,80,0.5)', display: 'inline-block' }} />
+          EATI MATCH
+        </div>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+          <div style={{ width: 48, height: 48, borderRadius: 15, flexShrink: 0, background: 'linear-gradient(135deg, rgba(255,200,80,0.15), rgba(255,150,40,0.08))', border: '1px solid rgba(255,190,70,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>🦞</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 900, color: 'rgba(255,240,210,0.9)', lineHeight: 1.4 }}>还没测过 EATI？</div>
+            <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.65, color: 'rgba(255,220,180,0.52)' }}>做个测评，看看你和这家店的口味契合度有多高</div>
+          </div>
+        </div>
+        <a href="/xuhui-island" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 16, padding: '11px 14px', borderRadius: 14, background: 'linear-gradient(135deg, rgba(255,160,40,0.24), rgba(255,100,20,0.12))', border: '1px solid rgba(255,160,40,0.3)', color: '#ffd080', fontSize: 13, fontWeight: 900, textDecoration: 'none', transition: 'background 0.2s' }}>
+          🎯 去做 EATI 测评
+        </a>
+      </div>
+    </div>
+  );
 
   const cfg = GRADE_COZE_CONFIG[matchInfo.grade];
   const isDestiny = matchInfo.grade === 'destiny';
+  const isGreat = matchInfo.grade === 'great';
   const dims = ['A', 'B', 'C', 'D'];
 
+  // R2 Phil Duncan：天命/高度契合的视效大幅增强
   return (
     <div style={{
-      borderRadius: 18,
-      background: `rgba(255,255,255,0.08)`,
+      borderRadius: 24,
+      background: `linear-gradient(145deg, ${cfg.accentSoft} 0%, rgba(18,12,8,0.94) 72%)`,
       border: `1px solid ${cfg.accentBorder}`,
       overflow: 'hidden',
       position: 'relative',
-      backdropFilter: 'blur(8px)',
+      backdropFilter: 'blur(18px)',
+      boxShadow: isDestiny
+        ? `0 20px 48px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.05), 0 0 80px rgba(246,188,84,0.35), 0 0 160px rgba(246,188,84,0.12)`
+        : isGreat
+          ? `0 18px 44px rgba(0,0,0,0.26), 0 0 0 1px rgba(255,255,255,0.04), 0 0 56px rgba(71,227,184,0.25)`
+          : `0 16px 40px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.04), 0 0 32px ${cfg.accent}14`,
     }}>
-      {/* 顶部 accent 细线 */}
+      {/* ── destiny 天命粒子爆炸 ── */}
+      {isDestiny && (
+        <div style={{ position: 'absolute', inset: 0, borderRadius: 24, overflow: 'hidden', pointerEvents: 'none', zIndex: 0 }}>
+          {[0,1,2,3,4,5,6,7].map((i) => (
+            <div key={i} style={{
+              position: 'absolute',
+              left: `${12 + i * 12}%`,
+              top: `${20 + (i % 3) * 25}%`,
+              width: 4 + (i % 3) * 2,
+              height: 4 + (i % 3) * 2,
+              borderRadius: '50%',
+              background: ['#f6bc54', '#ffdd80', '#fff', '#ffa040', '#ffe070', '#ffcc30', '#ff9030', '#fffbe0'][i],
+              opacity: 0.7,
+              animation: `eati-particle-${i % 4} ${2.2 + i * 0.35}s ease-in-out ${i * 0.28}s infinite`,
+            }} />
+          ))}
+          {/* 光晕扫描线 */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: 24,
+            background: 'linear-gradient(135deg, rgba(246,188,84,0) 0%, rgba(246,188,84,0.08) 50%, rgba(246,188,84,0) 100%)',
+            backgroundSize: '200% 200%',
+            animation: 'eati-sweep 3s ease-in-out infinite',
+          }} />
+        </div>
+      )}
+      {/* ── great 脉冲光晕 ── */}
+      {isGreat && (
+        <div style={{ position: 'absolute', inset: 0, borderRadius: 24, overflow: 'hidden', pointerEvents: 'none', zIndex: 0 }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: 24,
+            background: 'radial-gradient(circle at 50% 30%, rgba(71,227,184,0.12) 0%, rgba(71,227,184,0) 70%)',
+            animation: 'eati-great-pulse 2.8s ease-in-out infinite',
+          }} />
+        </div>
+      )}
       <div style={{
-        height: 3,
-        background: cfg.accent,
-        opacity: 0.85,
+        height: 4,
+        background: `linear-gradient(90deg, ${cfg.accent}, rgba(255,255,255,0.12))`,
+        opacity: 0.95,
+        position: 'relative', zIndex: 1,
         ...(isDestiny ? { animation: 'eati-accent-shimmer 2.4s linear infinite', backgroundImage: `linear-gradient(90deg,${cfg.accent}00,${cfg.accent},${cfg.accent}00)`, backgroundSize: '200% 100%' } : {}),
       }} />
 
-      <div style={{ padding: '14px 16px 16px', background: cfg.accentSoft }}>
-        {/* ── 第一行：人格 + 胶囊 + 进度环 ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          {/* 人格 emoji 小头像 */}
-          <div style={{
-            width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-            background: 'rgba(255,255,255,0.18)',
-            border: `1px solid ${cfg.accentBorder}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 22,
-          }}>
-            {matchInfo.personalityEmoji}
-          </div>
-
-          {/* 中间：人格名 + 胶囊 */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              display: 'inline-flex', alignItems: 'center',
-              padding: '3px 10px', borderRadius: 999,
-              background: cfg.pill, color: cfg.pillColor,
-              fontSize: 11, fontWeight: 800, letterSpacing: '0.02em',
-              marginBottom: 4,
-            }}>
-              {cfg.label}
-            </div>
-            <div style={{
-              fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: 600,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
-              {matchInfo.personalityName} · {matchInfo.eatiCode}
-            </div>
-          </div>
-
-          {/* 进度环 */}
-          <RingScore score={matchInfo.score} color={cfg.accent} trackColor={cfg.ringTrack} />
+      {/* R2 Phil Duncan：内容区升级 */}
+      <div style={{ padding: '18px 18px 20px', position: 'relative', zIndex: 1 }}>
+        {/* 顶部 EATI MATCH 标签行 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: cfg.accent, display: 'inline-block', boxShadow: `0 0 6px ${cfg.accent}` }} />
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', color: 'rgba(255,231,204,0.42)' }}>EATI MATCH</span>
         </div>
 
-        {/* ── 第二行：4维度水平条 ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', gap: 14, minWidth: 0, flex: 1 }}>
+            {/* R2：emoji头像区，天命时加金色光环 */}
+            <div style={{
+              width: 52,
+              height: 52,
+              borderRadius: 17,
+              flexShrink: 0,
+              background: `linear-gradient(135deg, ${cfg.accentSoft}, rgba(255,255,255,0.06))`,
+              border: `1.5px solid ${cfg.accentBorder}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 26,
+              boxShadow: isDestiny
+                ? `0 0 0 3px rgba(246,188,84,0.25), 0 0 18px rgba(246,188,84,0.3), inset 0 1px 0 rgba(255,255,255,0.1)`
+                : isGreat
+                  ? `0 0 0 2px rgba(71,227,184,0.2), inset 0 1px 0 rgba(255,255,255,0.08)`
+                  : `inset 0 1px 0 rgba(255,255,255,0.07)`,
+            }}>
+              {matchInfo.personalityEmoji}
+            </div>
+
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {/* R2：匹配等级胶囊 — 更突出 */}
+              <div style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 13px', borderRadius: 999, background: cfg.pill, color: cfg.pillColor, fontSize: 12, fontWeight: 900, boxShadow: isDestiny ? `0 0 14px rgba(246,188,84,0.4)` : isGreat ? `0 0 10px rgba(71,227,184,0.3)` : 'none' }}>
+                {cfg.label}
+              </div>
+              <div style={{
+                marginTop: 8,
+                fontSize: 13,
+                color: 'rgba(255,243,228,0.78)',
+                fontWeight: 700,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {matchInfo.personalityName} · {matchInfo.eatiCode}
+              </div>
+            </div>
+          </div>
+
+          {/* R2：进度环 — 升级为60px更突出，Phil Duncan 食物游戏色彩风格 */}
+          <div style={{
+            flexShrink: 0,
+            padding: '8px 10px',
+            borderRadius: 20,
+            background: `${cfg.accentSoft}`,
+            border: `1.5px solid ${cfg.accentBorder}`,
+          }}>
+            <RingScore score={matchInfo.score} color={cfg.accent} trackColor={cfg.ringTrack} />
+          </div>
+        </div>
+
+        {/* 描述卡 — 增加左侧彩色竖线 */}
+        <div
+          style={{
+            marginTop: 16,
+            padding: '12px 14px',
+            borderRadius: 16,
+            background: 'rgba(255,255,255,0.045)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderLeft: `3px solid ${cfg.accent}`,
+            fontSize: 13,
+            lineHeight: 1.75,
+            color: 'rgba(255,244,232,0.78)',
+          }}
+        >
+          {cfg.desc}
+        </div>
+
+        {/* R2 Phil Duncan：4维标签 — 色彩分区更清晰，命中维度用Overcooked风格高饱和配色 */}
+        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
           {dims.map((dim) => {
             const matched = matchInfo.matchedDimensions.includes(dim);
             const dimInfo = EATI_DIM_LABELS[dim];
             return (
               <div key={dim} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                opacity: matched ? 1 : 0.35,
-                transition: 'opacity 200ms ease',
+                padding: '10px 12px',
+                borderRadius: 14,
+                background: matched
+                  ? `linear-gradient(135deg, ${cfg.accent}20, ${cfg.accent}08)`
+                  : 'rgba(255,255,255,0.03)',
+                border: matched ? `1.5px solid ${cfg.accentBorder}` : '1px solid rgba(255,255,255,0.07)',
+                boxShadow: matched ? `0 2px 8px ${cfg.accent}18, inset 0 1px 0 rgba(255,255,255,0.06)` : 'none',
+                transition: 'all 0.3s ease',
               }}>
-                <span style={{ fontSize: 12, width: 18, textAlign: 'center', flexShrink: 0 }}>
-                  {dimInfo.emoji}
-                </span>
-                <span style={{
-                  fontSize: 11, fontWeight: 700,
-                  color: matched ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)',
-                  width: 42, flexShrink: 0,
-                }}>
-                  {dimInfo.name}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                    <span style={{ fontSize: 15, flexShrink: 0 }}>{dimInfo.emoji}</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: matched ? '#fff8ef' : 'rgba(255,255,255,0.42)' }}>
+                      {dimInfo.name}
+                    </span>
+                  </div>
+                  {/* R2：命中状态标签，视觉更强 */}
+                  <span style={{
+                    fontSize: 10,
+                    fontWeight: 900,
+                    padding: '2px 7px',
+                    borderRadius: 999,
+                    background: matched ? cfg.pill : 'rgba(255,255,255,0.08)',
+                    color: matched ? cfg.pillColor : 'rgba(255,255,255,0.3)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}>
+                    {matched ? '✓ 命中' : '— 待补'}
+                  </span>
+                </div>
                 {/* 进度条 */}
                 <div style={{
-                  flex: 1, height: 4, borderRadius: 99,
-                  background: 'rgba(255,255,255,0.1)',
+                  marginTop: 8,
+                  height: 4,
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.07)',
                   overflow: 'hidden',
                 }}>
                   <div style={{
-                    height: '100%', borderRadius: 99,
-                    background: matched ? cfg.accent : 'transparent',
+                    height: '100%',
                     width: matched ? '100%' : '0%',
-                    transition: 'width 0.5s cubic-bezier(.34,1.56,.64,1)',
+                    borderRadius: 999,
+                    background: matched ? `linear-gradient(90deg, ${cfg.accent}, ${cfg.accent}cc)` : 'transparent',
+                    transition: 'width 0.6s cubic-bezier(.34,1.56,.64,1)',
+                    boxShadow: matched ? `0 0 6px ${cfg.accent}80` : 'none',
                   }} />
-                </div>
-                {/* 状态点 */}
-                <div style={{
-                  width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
-                  background: matched ? cfg.accent : 'rgba(255,255,255,0.1)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 9, color: '#fff', fontWeight: 900,
-                  transition: 'background 200ms ease',
-                }}>
-                  {matched ? '✓' : ''}
                 </div>
               </div>
             );
           })}
-        </div>
-
-        {/* ── 第三行：龙虾推荐语 ── */}
-        <div style={{
-          marginTop: 12,
-          display: 'flex', alignItems: 'center', gap: 7,
-          padding: '8px 12px', borderRadius: 12,
-          background: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.1)',
-        }}>
-          <span style={{ fontSize: 14, flexShrink: 0 }}>🦞</span>
-          <span style={{
-            fontSize: 12, fontWeight: 600,
-            color: 'rgba(255,255,255,0.65)', lineHeight: 1.5,
-          }}>
-            {cfg.desc}
-          </span>
         </div>
       </div>
 
@@ -382,7 +499,168 @@ function EatiMatchTag({ shopId, shopEatiCode }: { shopId: string; shopEatiCode?:
           0% { background-position: -200% 0; }
           100% { background-position: 200% 0; }
         }
+        @keyframes eati-particle-0 {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.7; }
+          50% { transform: translate(8px, -14px) scale(1.4); opacity: 1; }
+        }
+        @keyframes eati-particle-1 {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.5; }
+          50% { transform: translate(-10px, -10px) scale(1.6); opacity: 0.9; }
+        }
+        @keyframes eati-particle-2 {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+          50% { transform: translate(5px, -18px) scale(1.2); opacity: 1; }
+        }
+        @keyframes eati-particle-3 {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.8; }
+          50% { transform: translate(-6px, -12px) scale(1.5); opacity: 0.6; }
+        }
+        @keyframes eati-sweep {
+          0%, 100% { background-position: 0% 0%; opacity: 0.6; }
+          50% { background-position: 100% 100%; opacity: 1; }
+        }
+        @keyframes eati-great-pulse {
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.06); }
+        }
       `}</style>
+    </div>
+  );
+}
+
+/** R7 三人联审：可折叠面板 — 统一间距/字重/色系 */
+function CollapsePanel({
+  title, icon, defaultOpen = true, accentColor = 'rgba(255,200,100,0.55)',
+  children, badge,
+}: {
+  title: string; icon: string; defaultOpen?: boolean;
+  accentColor?: string; children: ReactNode; badge?: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{
+      borderRadius: 16,
+      overflow: 'hidden',
+      border: '1px solid rgba(255,200,120,0.12)',
+      background: 'linear-gradient(180deg, rgba(255,255,255,0.028) 0%, rgba(255,255,255,0.016) 100%)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+    }}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setOpen((v) => !v); }}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '11px 16px', cursor: 'pointer', userSelect: 'none', gap: 8,
+          background: open ? 'rgba(255,255,255,0.03)' : 'transparent',
+          borderBottom: open ? '1px solid rgba(255,200,120,0.08)' : 'none',
+          transition: 'background 0.2s, border-bottom 0.2s',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>{icon}</span>
+          <span style={{ fontSize: 12, fontWeight: 900, color: accentColor, letterSpacing: '0.05em' }}>{title}</span>
+          {badge}
+        </div>
+        <span style={{
+          fontSize: 10, color: 'rgba(255,200,100,0.3)',
+          transition: 'transform 0.25s ease, opacity 0.2s',
+          display: 'inline-block',
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+          opacity: open ? 0.6 : 0.3,
+        }}>▾</span>
+      </div>
+      {open && (
+        <div style={{ padding: '10px 16px 14px' }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 角色 EATI 编码（基于名字哈希确定性生成）───────────────────────────
+
+/**
+ * 根据角色名字哈希生成 EATI 编码（确定性，相同名字输出相同编码）
+ * 用于让每个龙虾角色拥有固有的"口味人格"
+ */
+function getActorEatiCode(name: string): string {
+  const h = Array.from(name).reduce((s, c) => s + c.charCodeAt(0), 0);
+  const bits = ['A', 'B', 'C', 'D'].map((_, i) => ((h >> i) & 1) ? 'H' : 'L');
+  return bits.join('');
+}
+
+/** 角色 EATI 人格小标签（贴纸风，展示在对话框名字下方）*/
+function ActorEatiPill({ actorName }: { actorName: string }) {
+  const code = getActorEatiCode(actorName);
+  const p = PERSONALITY_MAP.get(code) ?? PERSONALITY_MAP.get('LLLL')!;
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+      padding: '2px 8px',
+      borderRadius: 999,
+      background: 'rgba(255,200,80,0.12)',
+      border: '1px solid rgba(255,200,80,0.22)',
+      fontSize: 9,
+      fontWeight: 900,
+      color: 'rgba(255,220,130,0.85)',
+      letterSpacing: '0.04em',
+      whiteSpace: 'nowrap',
+    }}>
+      <span>{p.emoji}</span>
+      <span>{p.name}</span>
+      <span style={{ opacity: 0.6, fontWeight: 600 }}>·{code}</span>
+    </div>
+  );
+}
+
+/** 店铺 EATI 编码标签（展示在店名旁边）*/
+function ShopEatiCodeTag({ eatiCode }: { eatiCode: string }) {
+  const dims = [
+    { label: '口味', bit: eatiCode[0], H: '重口🌶️', L: '清淡🌿' },
+    { label: '探索', bit: eatiCode[1], H: '冒险🗺️', L: '稳定🏠' },
+    { label: '精细', bit: eatiCode[2], H: '讲究✨', L: '随意👌' },
+    { label: '决策', bit: eatiCode[3], H: '纠结🤔', L: '果断⚡' },
+  ];
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      padding: '4px 10px 4px 7px',
+      borderRadius: 12,
+      background: 'rgba(255,190,60,0.1)',
+      border: '1px solid rgba(255,190,60,0.22)',
+      backdropFilter: 'blur(4px)',
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 900, color: 'rgba(255,200,100,0.55)', letterSpacing: '0.08em' }}>EATI</span>
+      <div style={{ display: 'flex', gap: 3 }}>
+        {dims.map(({ label, bit }) => (
+          <span
+            key={label}
+            title={`${label}: ${bit === 'H' ? dims.find(d => d.label === label)?.H : dims.find(d => d.label === label)?.L}`}
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 9,
+              fontWeight: 900,
+              background: bit === 'H' ? 'rgba(255,120,40,0.25)' : 'rgba(80,200,120,0.2)',
+              color: bit === 'H' ? '#ff9040' : '#5ecf88',
+              border: `1px solid ${bit === 'H' ? 'rgba(255,100,30,0.3)' : 'rgba(60,200,100,0.25)'}`,
+            }}
+          >
+            {bit}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -864,10 +1142,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
   const [activeAction, setActiveAction] = useState<ShopActionId>('work');
   const [sceneFocus, setSceneFocus] = useState<SceneView>('hall');
   const [showAllTopDishes, setShowAllTopDishes] = useState(false);
-  const [points, setPoints] = useState(() => {
-    if (typeof window === 'undefined') return 120;
-    return Number(localStorage.getItem('world:points') ?? 120);
-  });
+  const [points, setPoints] = useState(120);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [actors, setActors] = useState<SceneActor[]>(() =>
     shop ? buildInitialActors(shop) : []
@@ -876,15 +1151,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [streamingActorId, setStreamingActorId] = useState<string | null>(null);
-  const [chatMessagesByActor, setChatMessagesByActor] = useState<Record<string, ChatMessage[]>>(() => {
-    if (typeof window === 'undefined') return {};
-    try {
-      const raw = sessionStorage.getItem(`world:chat:${shopId}`);
-      return raw ? (JSON.parse(raw) as Record<string, ChatMessage[]>) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [chatMessagesByActor, setChatMessagesByActor] = useState<Record<string, ChatMessage[]>>({});
   const kitchenAudioRef = useRef<HTMLAudioElement>(null);
 
   // 场景内对话状态：{ actorId, stageId } 表示当前在哪个场景点击了哪个角色
@@ -955,7 +1222,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
             dishName: allDishes[newId % allDishes.length],
             done: false, // 新进来的是制作中
           },
-        ].slice(-20); // 只保留最新 20 条
+        ].slice(-15); // 只保留最新 15 条，超出顶掉旧的
         return next;
       });
       // 滚到底部
@@ -1021,6 +1288,11 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
   useEffect(() => {
     const kitchenAudio = kitchenAudioRef.current;
     if (kitchenAudio) kitchenAudio.volume = 0.34;
+  }, []);
+
+  useEffect(() => {
+    const storedPoints = Number(localStorage.getItem('world:points') ?? 120);
+    setPoints(Number.isFinite(storedPoints) ? storedPoints : 120);
   }, []);
 
   useEffect(() => {
@@ -1224,6 +1496,11 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
       },
     ],
     [actors, shop]
+  );
+
+  const hallStage = useMemo(
+    () => sceneStages.find((stage) => stage.id === 'hall') ?? sceneStages[0],
+    [sceneStages]
   );
 
   const appendChatMessage = (actor: SceneActor, nextMessage: ChatMessage) => {
@@ -1877,11 +2154,11 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
         <div style={{
           position: 'relative',
           background: 'linear-gradient(160deg, #1a0c04 0%, #2d1506 40%, #1a0c04 100%)',
-          borderRadius: 24,
-          border: '2px solid rgba(255,160,60,0.25)',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,200,100,0.1), 0 0 60px rgba(255,120,40,0.08)',
+          borderRadius: 26,
+          border: '1.5px solid rgba(255,160,60,0.22)',
+          boxShadow: '0 10px 48px rgba(0,0,0,0.58), inset 0 1px 0 rgba(255,200,100,0.12), 0 0 80px rgba(255,120,40,0.07)',
           overflow: 'hidden',
-          marginBottom: 16,
+          marginBottom: 18,
         }}>
           {/* 木纹底纹 */}
           <div style={{
@@ -1897,182 +2174,153 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
             animation: 'sign-glow 2.5s ease-in-out infinite',
           }} />
 
-          <div style={{ padding: '18px 24px 20px', position: 'relative', zIndex: 2 }}>
-            {/* 顶栏：返回 + 音效 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ padding: '22px 30px 28px', position: 'relative', zIndex: 2 }}>
+            {/* ── R1/R7：顶部导航栏 — 精简，增加呼吸感 ── */}
+            <div className="shop-hero-topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Link href="/xuhui-island" onClick={() => playAudioFile('/back.mp3', 0.6)} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,200,100,0.2)',
-                  borderRadius: 20, padding: '7px 14px', color: 'rgba(255,220,150,0.85)',
-                  textDecoration: 'none', fontSize: 13, fontWeight: 700,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,210,150,0.18)',
+                  borderRadius: 999, padding: '8px 16px', color: 'rgba(255,231,198,0.88)',
+                  textDecoration: 'none', fontSize: 13, fontWeight: 800,
+                  backdropFilter: 'blur(12px)',
+                  transition: 'background 0.2s',
                 }}>
                   ← 返回小岛
                 </Link>
                 <button type="button" onClick={() => { playAudioFile('/usual.mp3', 0.5); toggleAmbientSound(); }} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  background: soundEnabled ? 'rgba(255,120,40,0.18)' : 'rgba(255,255,255,0.05)',
-                  border: `1px solid ${soundEnabled ? 'rgba(255,120,40,0.35)' : 'rgba(255,255,255,0.1)'}`,
-                  borderRadius: 20, padding: '7px 14px',
-                  color: soundEnabled ? '#ffaa60' : 'rgba(255,200,150,0.5)',
-                  fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: soundEnabled ? 'rgba(255,176,90,0.14)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${soundEnabled ? 'rgba(255,188,96,0.28)' : 'rgba(255,255,255,0.1)'}`,
+                  borderRadius: 999, padding: '8px 16px',
+                  color: soundEnabled ? '#ffd59d' : 'rgba(255,225,188,0.5)',
+                  fontSize: 13, fontWeight: 800, cursor: 'pointer',
+                  backdropFilter: 'blur(12px)',
                 }}>
                   {soundEnabled ? '🔊' : '🔇'} {soundEnabled ? '关闭白噪音' : '开启白噪音'}
                 </button>
               </div>
-              {/* 营业状态指示灯 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{
-                  width: 8, height: 8, borderRadius: '50%',
-                  background: '#4ade80',
-                  boxShadow: '0 0 8px #4ade80, 0 0 16px rgba(74,222,128,0.4)',
-                  animation: 'pulse 2s ease-in-out infinite',
-                  display: 'inline-block',
-                }} />
-                <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 700 }}>正在营业</span>
-              </div>
             </div>
 
-            {/* 主招牌区域 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap' }}>
+            {/* ── R1：店名独立一行，大标题留白充分 ── */}
+            <div className="shop-hero-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 20, alignItems: 'start' }}>
               <div>
-                {/* 店名灯箱 */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                  <h1 style={{
-                    margin: 0,
-                    fontSize: 'clamp(28px, 4vw, 44px)',
-                    fontWeight: 900,
-                    color: '#ffd270',
-                    textShadow: '0 0 20px rgba(255,180,60,0.6), 0 2px 0 rgba(0,0,0,0.5)',
-                    lineHeight: 1.1,
-                    letterSpacing: 1,
-                  }}>
-                    {getShopIcon(shop.cuisine, shop.id)} {shop.name}
-                  </h1>
+                {/* 第一行：大标题 */}
+                <h1 style={{
+                  margin: 0,
+                  fontSize: 'clamp(26px, 3.6vw, 42px)',
+                  fontWeight: 900,
+                  color: '#ffd270',
+                  textShadow: '0 0 24px rgba(255,180,60,0.65), 0 2px 0 rgba(0,0,0,0.55)',
+                  lineHeight: 1.1,
+                  letterSpacing: 1,
+                }}>
+                  {getShopIcon(shop.cuisine, shop.id)} {shop.name}
+                </h1>
+
+                {/* 第二行：标签组 — 评分 + 客流 + EATI 同排，用间距区分视觉权重 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                  {/* 评分 — 主要信息，稍大 */}
                   <div style={{
-                    display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    background: 'linear-gradient(135deg, rgba(255,180,30,0.28), rgba(255,140,20,0.16))',
+                    border: '1px solid rgba(255,180,30,0.45)',
+                    borderRadius: 10, padding: '5px 11px',
+                    fontSize: 14, fontWeight: 900, color: '#ffd060',
                   }}>
-                    {/* 评分 */}
-                    <div style={{
-                      background: 'linear-gradient(135deg, rgba(255,180,30,0.25), rgba(255,140,20,0.15))',
-                      border: '1px solid rgba(255,180,30,0.4)',
-                      borderRadius: 12, padding: '4px 10px',
-                      fontSize: 14, fontWeight: 900, color: '#ffd060',
-                    }}>
-                      ⭐ 4.8
-                    </div>
-                    {/* 客流标签 */}
-                    <div style={{
-                      background: shop.crowdLevel === 'packed'
-                        ? 'rgba(255,80,60,0.2)' : shop.crowdLevel === 'busy'
-                          ? 'rgba(255,140,30,0.2)' : 'rgba(74,222,128,0.15)',
-                      border: `1px solid ${shop.crowdLevel === 'packed' ? 'rgba(255,80,60,0.5)' : shop.crowdLevel === 'busy' ? 'rgba(255,140,30,0.5)' : 'rgba(74,222,128,0.4)'}`,
-                      borderRadius: 12, padding: '4px 10px',
-                      fontSize: 12, fontWeight: 900,
-                      color: shop.crowdLevel === 'packed' ? '#f87171' : shop.crowdLevel === 'busy' ? '#fb923c' : '#4ade80',
-                      animation: shop.crowdLevel === 'packed' ? 'ops-flash 2s ease-in-out infinite' : 'none',
-                    }}>
-                      {shop.crowdLevel === 'packed' ? '🔥 爆满！' : shop.crowdLevel === 'busy' ? '🟠 较忙' : '✅ 顺畅'}
-                    </div>
+                    ⭐ 4.8
                   </div>
+                  {/* 客流标签 */}
+                  <div style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    background: shop.crowdLevel === 'packed'
+                      ? 'rgba(255,80,60,0.2)' : shop.crowdLevel === 'busy'
+                        ? 'rgba(255,140,30,0.2)' : 'rgba(74,222,128,0.15)',
+                    border: `1px solid ${shop.crowdLevel === 'packed' ? 'rgba(255,80,60,0.5)' : shop.crowdLevel === 'busy' ? 'rgba(255,140,30,0.5)' : 'rgba(74,222,128,0.4)'}`,
+                    borderRadius: 10, padding: '5px 11px',
+                    fontSize: 12, fontWeight: 900,
+                    color: shop.crowdLevel === 'packed' ? '#f87171' : shop.crowdLevel === 'busy' ? '#fb923c' : '#4ade80',
+                    animation: shop.crowdLevel === 'packed' ? 'ops-flash 2s ease-in-out infinite' : 'none',
+                  }}>
+                    {shop.crowdLevel === 'packed' ? '🔥 爆满！' : shop.crowdLevel === 'busy' ? '🟠 较忙' : '✅ 顺畅'}
+                  </div>
+                  {/* 分隔线 */}
+                  <div style={{ width: 1, height: 14, background: 'rgba(255,200,100,0.2)', flexShrink: 0 }} />
+                  {/* EATI 编码标签 — 辅助信息，放在分隔线后 */}
+                  {shop.eatiCode && <ShopEatiCodeTag eatiCode={shop.eatiCode} />}
                 </div>
-                {/* 一句话简介 */}
+
+                {/* 第三行：店铺简介 — 独占一行，增加上间距 */}
                 <p style={{
-                  margin: '8px 0 0',
-                  fontSize: 14, lineHeight: 1.7,
-                  color: 'rgba(255,200,140,0.65)',
-                  maxWidth: 520,
+                  margin: '16px 0 0',
+                  fontSize: 14, lineHeight: 1.85,
+                  color: 'rgba(255,218,174,0.7)',
+                  maxWidth: 620,
+                  fontWeight: 400,
+                  letterSpacing: '0.01em',
                 }}>
                   {shop.intro}
                 </p>
 
-                {/* EATI 匹配横幅（有测评时独立显示）*/}
-                <div style={{ marginTop: 12 }}>
-                  <EatiMatchTag shopId={shop.id} shopEatiCode={shop.eatiCode} />
-                </div>
-
-                {/* 实时客流数据条 */}
-                <div style={{
-                  display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap',
-                }}>
-                  {[
-                    { icon: '🪑', label: '在场', value: `${actors.filter((a) => a.role === 'guest').length} 人` },
-                    { icon: '📋', label: '今日单', value: `${opsSnapshot.completedOrders} 单` },
-                    { icon: '⏱️', label: '等位', value: `${opsSnapshot.queueTime} 分钟` },
-                    { icon: '💰', label: '免单池', value: `${opsSnapshot.ownerFreeMealChance}%` },
-                  ].map(({ icon, label, value }) => (
-                    <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                      <span style={{ fontSize: 14 }}>{icon}</span>
-                      <span style={{ fontSize: 11, color: 'rgba(255,200,130,0.5)' }}>{label}</span>
-                      <span style={{ fontSize: 13, fontWeight: 900, color: 'rgba(255,220,160,0.9)' }}>{value}</span>
-                    </div>
-                  ))}
-                </div>
               </div>
 
-              {/* 右侧操作按钮区 */}
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flexShrink: 0 }}>
-                {/* 进店打工 — 待开启 */}
-                <div style={{ position: 'relative', display: 'inline-block' }}>
-                  <button type="button" disabled style={{
-                    border: '1px solid rgba(180,150,100,0.2)',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'rgba(200,160,100,0.45)',
-                    borderRadius: 16, padding: '12px 20px',
-                    fontSize: 16, fontWeight: 900, lineHeight: 1,
-                    cursor: 'not-allowed',
+              {/* ── 右侧：4格指标 2x2 网格（在场、今日单、等位、免单池） ── */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignSelf: 'center', minWidth: 190 }}>
+                {[
+                  { icon: '🪑', label: '在场', value: `${actors.filter((a) => a.role === 'guest').length}`, unit: '人', hot: false },
+                  { icon: '📋', label: '今日单', value: `${opsSnapshot.completedOrders}`, unit: '单', hot: true },
+                  { icon: '⏱️', label: '等位', value: `${opsSnapshot.queueTime}`, unit: '分钟', hot: opsSnapshot.queueTime >= 20 },
+                  { icon: '💰', label: '免单池', value: `${opsSnapshot.ownerFreeMealChance}`, unit: '%', hot: false },
+                ].map(({ icon, label, value, unit, hot }) => (
+                  <div key={label} style={{
+                    padding: '10px 12px 11px',
+                    borderRadius: 14,
+                    background: hot
+                      ? 'linear-gradient(180deg, rgba(255,140,30,0.15), rgba(255,80,20,0.07))'
+                      : 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))',
+                    border: hot
+                      ? '1px solid rgba(255,140,30,0.32)'
+                      : '1px solid rgba(255,214,160,0.12)',
+                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
                   }}>
-                    进店打工
-                    <span style={{
-                      position: 'absolute', top: -6, right: -4,
-                      background: 'rgba(180,120,50,0.8)', color: '#fff',
-                      fontSize: 9, fontWeight: 900, padding: '2px 5px',
-                      borderRadius: 5, letterSpacing: 0.5,
-                    }}>待开启</span>
-                  </button>
-                </div>
-                {/* 看菜单 — 橘黄色 */}
-                <button type="button" onClick={() => setMenuModalOpen(true)} style={{
-                  border: 'none',
-                  background: 'linear-gradient(135deg, #f97316, #ea580c)',
-                  color: '#fff', borderRadius: 16, padding: '12px 20px',
-                  fontSize: 16, fontWeight: 900, lineHeight: 1,
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(234,88,12,0.45), 0 0 24px rgba(249,115,22,0.2)',
-                }}>
-                  🍽️ 看菜单
-                </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'rgba(255,208,154,0.5)', fontWeight: 700, letterSpacing: '0.03em' }}>
+                      <span style={{ fontSize: 12 }}>{icon}</span>
+                      <span>{label}</span>
+                    </div>
+                    <div style={{ marginTop: 4, display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                      <span style={{ fontSize: 22, fontWeight: 900, color: hot ? '#ff9840' : 'rgba(255,233,196,0.94)', lineHeight: 1, letterSpacing: -0.5 }}>{value}</span>
+                      <span style={{ fontSize: 10, fontWeight: 500, color: hot ? 'rgba(255,160,80,0.7)' : 'rgba(255,220,170,0.5)', marginLeft: 1 }}>{unit}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
+
           </div>
         </div>
 
-        <section className="shop-detail-layout" style={{ display: 'grid', gap: 18 }}>
+        <section className="shop-detail-layout" style={{ display: 'grid', gap: 20 }}>
           <div style={{ background: 'transparent' }}>
             <div style={{ display: 'grid', gap: 14 }}>
-              {sceneStages.map((stage) => (
+              {hallStage ? (
                 <section
-                  key={stage.id}
+                  key={hallStage.id}
                   style={{
                     position: 'relative',
                     overflow: 'hidden',
                     borderRadius: 20,
-                    border: stage.id === 'kitchen'
-                      ? '2px solid rgba(255,100,30,0.5)'
-                      : stage.id === sceneFocus
-                        ? '2px solid rgba(215,108,44,0.82)'
-                        : '1.5px solid rgba(255,200,120,0.2)',
-                    boxShadow: stage.id === 'kitchen'
-                      ? '0 16px 40px rgba(255,80,20,0.18), inset 0 0 60px rgba(255,100,30,0.06)'
-                      : stage.id === sceneFocus
-                        ? '0 22px 44px rgba(215,108,44,0.16)'
-                        : '0 8px 24px rgba(0,0,0,0.25)',
+                    border: hallStage.id === sceneFocus
+                      ? '2px solid rgba(215,108,44,0.82)'
+                      : '1.5px solid rgba(255,200,120,0.2)',
+                    boxShadow: hallStage.id === sceneFocus
+                      ? '0 22px 44px rgba(215,108,44,0.16)'
+                      : '0 8px 24px rgba(0,0,0,0.25)',
                   }}
                 >
                   <div className="scene-stage" style={{ position: 'relative', overflow: 'hidden' }}>
                     <img
-                      src={stage.imageUrl}
-                      alt={`${shop.name}${stage.title}`}
+                      src={hallStage.imageUrl}
+                      alt={`${shop.name}${hallStage.title}`}
                       draggable={false}
                       style={{
                         position: 'absolute',
@@ -2083,7 +2331,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                       }}
                     />
 
-                    {stage.id === 'hall' ? (
+                    {hallStage.id === 'hall' ? (
                       <>
                         {/* 顶部弹幕跑马灯 */}
                         <div
@@ -2108,7 +2356,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                           >
                             {[...opsSnapshot.barrageComments, ...opsSnapshot.barrageComments].map((comment, index) => (
                               <span
-                                key={`${stage.id}-barrage-${index}`}
+                                key={`${hallStage.id}-barrage-${index}`}
                                 style={{
                                   ...darkChipStyle,
                                   background: 'rgba(34, 24, 20, 0.72)',
@@ -2185,7 +2433,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                       </>
                     ) : null}
 
-                    {stage.id === 'kitchen' ? (
+                    {hallStage.id === 'kitchen' ? (
                       <>
                         {/* 厨房压力指示器（左上角） */}
                         <div
@@ -2372,18 +2620,18 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                         position: 'absolute',
                         inset: 0,
                         background:
-                          stage.id === 'hall'
+                          hallStage.id === 'hall'
                             ? 'linear-gradient(180deg, rgba(255,248,240,0.04) 0%, rgba(23,12,8,0.14) 100%)'
                             : 'linear-gradient(180deg, rgba(255,248,240,0.03) 0%, rgba(23,12,8,0.22) 100%)',
                       }}
                     />
 
                     <div style={{ position: 'absolute', left: 16, top: 16, ...darkChipStyle, zIndex: 6 }}>
-                      {shop.name} {stage.title}
+                      {shop.name} {hallStage.title}
                     </div>
 
                     {/* 点击空白区域关闭场景对话 */}
-                    {sceneDialogState?.stageId === stage.id && (
+                    {sceneDialogState?.stageId === hallStage.id && (
                       <div
                         style={{ position: 'absolute', inset: 0, zIndex: 8, cursor: 'default' }}
                         onClick={(e) => {
@@ -2393,17 +2641,17 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                       />
                     )}
 
-                    {stage.actors.map((actor) => {
-                      const inKitchen = stage.id === 'kitchen';
-                      const placement = actorPlacement(actor, stage.id);
+                    {hallStage.actors.map((actor) => {
+                      const inKitchen = hallStage.id === 'kitchen';
+                      const placement = actorPlacement(actor, hallStage.id);
                       const shellSize = actorShellSize(actor.role);
                       const coreSize = actorCoreSize(actor.role);
                       const glow = actorGlow(actor.role);
                       const bubbleOnLeft = placement.x > 68;
-                      const actorKey = `${stage.id}-${actor.id}`;
+                      const actorKey = `${hallStage.id}-${actor.id}`;
                       const isHovered = hoveredActorKey === actorKey;
-                      const isDialogOpen = sceneDialogState?.actorId === actor.id && sceneDialogState?.stageId === stage.id;
-                      const isDialogMotionActor = sceneDialogMotion?.actorId === actor.id && sceneDialogMotion.stageId === stage.id;
+                      const isDialogOpen = sceneDialogState?.actorId === actor.id && sceneDialogState?.stageId === hallStage.id;
+                      const isDialogMotionActor = sceneDialogMotion?.actorId === actor.id && sceneDialogMotion.stageId === hallStage.id;
                       // 所有角色都可对话（包括客人）
                       const isInteractable = true;
 
@@ -2425,7 +2673,7 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                           }}
                           onMouseEnter={() => isInteractable && setHoveredActorKey(actorKey)}
                           onMouseLeave={() => setHoveredActorKey(null)}
-                          onClick={() => isInteractable && handleSceneActorClick(actor, stage.id)}
+                          onClick={() => isInteractable && handleSceneActorClick(actor, hallStage.id)}
                         >
                           {/* 圆形背景：默认隐藏，hover 或对话中显示 */}
                           <div
@@ -2572,13 +2820,13 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
 
                     {/* 场景内嵌对话浮层 */}
                     {(() => {
-                      if (!sceneDialogState || sceneDialogState.stageId !== stage.id) return null;
+                      if (!sceneDialogState || sceneDialogState.stageId !== hallStage.id) return null;
                       const dialogActor = actors.find((a) => a.id === sceneDialogState.actorId);
                       if (!dialogActor) return null;
-                      const dialogMotion = sceneDialogMotion?.actorId === dialogActor.id && sceneDialogMotion.stageId === stage.id
+                      const dialogMotion = sceneDialogMotion?.actorId === dialogActor.id && sceneDialogMotion.stageId === hallStage.id
                         ? sceneDialogMotion
                         : null;
-                      const inKitchen = stage.id === 'kitchen';
+                      const inKitchen = hallStage.id === 'kitchen';
                       const msgs = chatMessagesByActor[dialogActor.id] ?? [];
                       const isStreaming = streamingActorId === dialogActor.id;
                       const avatarIsAtOrigin = dialogMotion?.phase === 'opening' || dialogMotion?.phase === 'closing';
@@ -2717,9 +2965,12 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                                     borderRadius: 4,
                                   }}>客人</span>
                                 )}
-                                <span style={{ fontSize: 13, fontWeight: 900, color: '#ffd580' }}>
-                                  {getActorDisplayName(dialogActor, inKitchen)}
-                                </span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 900, color: '#ffd580' }}>
+                                    {getActorDisplayName(dialogActor, inKitchen)}
+                                  </span>
+                                  <ActorEatiPill actorName={dialogActor.name} />
+                                </div>
                               </div>
                               {/* 右侧按钮组 */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -2896,10 +3147,10 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                     })()}
 
                     {/* ===== 放大对话模态框 ===== */}
-                    {sceneDialogExpanded && sceneDialogState && sceneDialogState.stageId === stage.id && (() => {
+                    {sceneDialogExpanded && sceneDialogState && sceneDialogState.stageId === hallStage.id && (() => {
                       const expandActor = actors.find((a) => a.id === sceneDialogState.actorId);
                       if (!expandActor) return null;
-                      const expandInKitchen = stage.id === 'kitchen';
+                      const expandInKitchen = hallStage.id === 'kitchen';
                       const expandMsgs = chatMessagesByActor[expandActor.id] ?? [];
                       const expandStreaming = streamingActorId === expandActor.id;
                       return (
@@ -2978,6 +3229,10 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                               {expandActor.role === 'guest' && (
                                 <span style={{ background: 'rgba(60,140,220,0.88)', color: '#fff', fontSize: 11, fontWeight: 900, padding: '2px 8px', borderRadius: 6 }}>客人</span>
                               )}
+                              {/* EATI 人格标签 */}
+                              <div style={{ marginTop: 2 }}>
+                                <ActorEatiPill actorName={expandActor.name} />
+                              </div>
                             </div>
                           </div>
 
@@ -3134,436 +3389,388 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
                         pointerEvents: 'none',
                       }}
                     >
-                      {stage.description}
+                      {hallStage.description}
                     </div>
                   </div>
                 </section>
-              ))}
+              ) : null}
+
+              {/* ── 厨房区块（大堂下方，紧凑横排） ── */}
+              {(() => {
+                const kitchenStage = sceneStages.find((s) => s.id === 'kitchen') ?? sceneStages[0];
+                return (
+                  <div style={{
+                    borderRadius: 20,
+                    overflow: 'hidden',
+                    border: `1.5px solid ${kitchenPressure >= 80 ? 'rgba(255,70,30,0.45)' : kitchenPressure >= 55 ? 'rgba(255,150,30,0.3)' : 'rgba(255,200,120,0.18)'}`,
+                    boxShadow: kitchenPressure >= 80 ? '0 0 20px rgba(255,60,20,0.12)' : '0 8px 24px rgba(0,0,0,0.28)',
+                    background: 'rgba(16,10,4,0.55)',
+                    backdropFilter: 'blur(18px)',
+                    WebkitBackdropFilter: 'blur(18px)',
+                  }}>
+                    {/* 标题栏 */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '10px 16px',
+                      borderBottom: '1px solid rgba(255,200,120,0.1)',
+                      background: 'rgba(255,255,255,0.025)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{ fontSize: 14 }}>🔥</span>
+                        <span style={{ fontSize: 12, fontWeight: 900, color: '#ffdca0', letterSpacing: '0.04em' }}>后厨直播</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontSize: 10, fontWeight: 900, color: kitchenPressure >= 80 ? '#ff6040' : kitchenPressure >= 55 ? '#ffaa40' : '#7ecf7e', animation: kitchenPressure >= 80 ? 'ops-flash 1.2s ease-in-out infinite' : 'none' }}>
+                          {kitchenPressure >= 80 ? '🔥 爆单' : kitchenPressure >= 55 ? '⚡ 高压' : '✅ 平稳'} {kitchenPressure}%
+                        </span>
+                        <span style={{ fontSize: 10, color: 'rgba(255,200,100,0.5)' }}>今日 {opsSnapshot.completedOrders} 单</span>
+                      </div>
+                    </div>
+
+                    {/* 主体：左侧出餐流水单（窄） + 右侧厨房图 */}
+                    <div style={{ display: 'flex', gap: 0 }}>
+                      {/* 左：出餐流水单（窄，毛玻璃背景） */}
+                      <div style={{ flex: '0 0 168px', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'rgba(255,255,255,0.03)', borderRight: '1px solid rgba(255,200,120,0.08)' }}>
+                        {/* 顶部：压力条 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 11px 8px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <span style={{ fontSize: 9, color: 'rgba(255,200,120,0.5)', flexShrink: 0 }}>压力</span>
+                          <div style={{ flex: 1, height: 3, background: 'rgba(255,255,255,0.09)', borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${kitchenPressure}%`, background: kitchenPressure >= 80 ? 'linear-gradient(90deg,#ff6000,#ff2000)' : kitchenPressure >= 55 ? 'linear-gradient(90deg,#ff9c00,#ff6000)' : 'linear-gradient(90deg,#4ade80,#22d3ee)', borderRadius: 3, transition: 'width 0.8s ease' }} />
+                          </div>
+                          <span style={{ fontSize: 9, fontWeight: 900, color: kitchenPressure >= 80 ? '#ff6040' : kitchenPressure >= 55 ? '#ffaa40' : '#7ecf7e', flexShrink: 0 }}>{kitchenPressure}%</span>
+                        </div>
+                        {/* 流水单 */}
+                        <div ref={orderScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 2, msOverflowStyle: 'none', scrollbarWidth: 'none', minHeight: 0 }}>
+                          {orderTickets.slice(-15).map((ticket) => (
+                            <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: ticket.done ? 0.55 : 1 }}>
+                              <span style={{ color: '#ffe7bd', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ticket.staffName}：{ticket.dishName}</span>
+                              <span style={{ marginLeft: 4, fontSize: 9, color: ticket.done ? '#8ff07f' : '#ffd166', flexShrink: 0 }}>{ticket.done ? '✅' : '🟠'}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {/* 底部计数 */}
+                        {(() => {
+                          const chefCount = shop.staffNames.length;
+                          const pendingCount = chefCount + 2 + (orderIdRef.current % 6);
+                          return (
+                            <div style={{ display: 'flex', gap: 6, fontSize: 9, color: 'rgba(255,200,120,0.6)', borderTop: '1px solid rgba(255,255,255,0.06)', padding: '5px 10px', flexShrink: 0 }}>
+                              <span>🟠 {chefCount}</span>
+                              <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
+                              <span>⏳ {pendingCount}</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* 右：厨房图（占满剩余，对话框叠加其上） */}
+                      <div style={{
+                        position: 'relative',
+                        flex: 1,
+                        minWidth: 0,
+                        aspectRatio: '4/3',
+                        background: '#0e0702',
+                        overflow: 'hidden',
+                      }}>
+                        <img
+                          src={kitchenStage.imageUrl}
+                          alt={`${shop.name}后厨`}
+                          draggable={false}
+                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+                        />
+                        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(8,4,1,0.1) 0%, rgba(8,4,1,0) 40%, rgba(8,4,1,0.55) 100%)', pointerEvents: 'none' }} />
+                        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 70% 20%, rgba(255,170,60,0.1) 0%, transparent 40%)', pointerEvents: 'none' }} />
+
+                        {/* 蒸汽粒子 */}
+                        <div style={{ position: 'absolute', left: '40%', top: '20%', width: 140, height: 80, transform: 'translateX(-50%)', pointerEvents: 'none', zIndex: 4 }}>
+                          {[0, 1, 2].map((si) => (
+                            <span key={`ks2-${si}`} style={{ position: 'absolute', left: `${14 + si * 22}%`, bottom: 0, width: 22 + si * 5, height: 26 + si * 8, borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.18) 48%, rgba(255,255,255,0) 100%)', filter: 'blur(7px)', opacity: 0.6, animation: `kitchen-steam 3.8s ease-out ${si * 0.45}s infinite` }} />
+                          ))}
+                        </div>
+
+                        {/* 厨师角色（可点击，选中时显示高亮圆圈但不消失） */}
+                        {kitchenStage.actors.map((actor) => {
+                          const placement = actorPlacement(actor, 'kitchen');
+                          const shellSize = Math.round(actorShellSize(actor.role) * 0.7);
+                          const coreSize = Math.round(actorCoreSize(actor.role) * 0.7);
+                          const glow = actorGlow(actor.role);
+                          const actorKey = `kitchen2-${actor.id}`;
+                          const isHovered = hoveredActorKey === actorKey;
+                          const isSelected = sceneDialogState?.actorId === actor.id && sceneDialogState?.stageId === 'kitchen';
+                          return (
+                            <div key={actorKey}
+                              style={{ position: 'absolute', left: `${placement.x}%`, top: `${placement.y}%`, width: shellSize, height: shellSize, transform: 'translate(-50%, -50%)', transition: 'left 3.6s ease-in-out, top 3.6s ease-in-out', zIndex: isSelected ? 20 : 4, cursor: isHovered ? 'pointer' : 'default' }}
+                              onMouseEnter={() => setHoveredActorKey(actorKey)}
+                              onMouseLeave={() => setHoveredActorKey(null)}
+                              onClick={() => handleSceneActorClick(actor, 'kitchen')}
+                            >
+                              {/* 选中/hover 光圈 */}
+                              <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: isHovered || isSelected ? `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.88) 0%, ${glow.bubble} 56%, rgba(255,255,255,0.08) 100%)` : 'transparent', border: isSelected ? `2.5px solid ${glow.ring}` : isHovered ? `1.5px solid ${glow.ring}` : 'none', boxShadow: isSelected ? `0 0 0 3px rgba(255,220,120,0.35), 0 14px 28px ${glow.shadow}` : isHovered ? `0 14px 28px ${glow.shadow}` : 'none', backdropFilter: isHovered || isSelected ? 'blur(8px)' : 'none', transition: 'background 0.2s, border 0.2s, box-shadow 0.2s' }} />
+                              {/* 选中时的外圈脉冲 */}
+                              {isSelected && (
+                                <div style={{ position: 'absolute', inset: -5, borderRadius: '50%', border: `1.5px solid ${glow.ring}`, opacity: 0.6, animation: 'ops-flash 1.8s ease-in-out infinite', pointerEvents: 'none' }} />
+                              )}
+                              <div style={{ position: 'absolute', left: '50%', top: -16, transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+                                <span style={{ color: '#ffcc88', fontSize: 9, fontWeight: 900, textShadow: '0 1px 0 rgba(78,43,21,1)', whiteSpace: 'nowrap' }}>{getActorDisplayName(actor, true)}</span>
+                              </div>
+                              <div style={{ position: 'absolute', left: '50%', top: '50%', width: coreSize, height: coreSize, transform: `translate(-50%, -50%) scaleX(${actor.flipped ? -1 : 1})` }}>
+                                <img src={actor.variant} alt={actor.name} draggable={false} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: isHovered || isSelected ? 'drop-shadow(0 8px 14px rgba(0,0,0,0.3)) brightness(1.12)' : 'drop-shadow(0 6px 10px rgba(0,0,0,0.2))', transition: 'filter 0.2s' }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* 厨房对话框 — 叠加在图上，复用大堂同款组件 */}
+                        {(() => {
+                          if (!sceneDialogState || sceneDialogState.stageId !== 'kitchen') return null;
+                          const dialogActor = actors.find((a) => a.id === sceneDialogState.actorId);
+                          if (!dialogActor) return null;
+                          const dialogMotion = sceneDialogMotion?.actorId === dialogActor.id && sceneDialogMotion.stageId === 'kitchen' ? sceneDialogMotion : null;
+                          const msgs = chatMessagesByActor[dialogActor.id] ?? [];
+                          const isStreaming = streamingActorId === dialogActor.id;
+                          const avatarIsAtOrigin = dialogMotion?.phase === 'opening' || dialogMotion?.phase === 'closing';
+                          const avatarLeft = avatarIsAtOrigin ? `${dialogMotion?.fromX ?? 50}%` : 'calc(100% - 280px)';
+                          const avatarTop = avatarIsAtOrigin ? `${dialogMotion?.fromY ?? 50}%` : 'calc(100% - 70px)';
+                          const avatarSize = avatarIsAtOrigin ? (dialogMotion?.fromSize ?? 56) : 80;
+                          return (
+                            <div style={{ position: 'absolute', inset: 0, zIndex: 30, pointerEvents: 'none' }} onClick={closeSceneDialog}>
+                              {/* 角色头像 */}
+                              <div style={{ position: 'absolute', left: avatarLeft, top: avatarTop, width: avatarSize, height: avatarSize, transform: 'translate(-50%, -50%)', zIndex: 31, pointerEvents: 'none', filter: 'drop-shadow(0 8px 24px rgba(0,0,0,0.4))', transition: 'left 0.56s cubic-bezier(0.22,1,0.36,1), top 0.56s cubic-bezier(0.22,1,0.36,1), width 0.56s, height 0.56s' }}>
+                                <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92) 0%, ${actorGlow(dialogActor.role).bubble} 56%, rgba(255,255,255,0.06) 100%)`, border: `2px solid ${actorGlow(dialogActor.role).ring}`, boxShadow: `0 0 32px ${actorGlow(dialogActor.role).shadow}`, backdropFilter: 'blur(12px)' }} />
+                                <img src={dialogActor.variant} alt={dialogActor.name} draggable={false} style={{ position: 'absolute', left: '50%', top: '50%', width: '78%', height: '78%', transform: 'translate(-50%, -50%)', objectFit: 'contain' }} />
+                                <div style={{ position: 'absolute', bottom: -18, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap', fontSize: 10, fontWeight: 900, color: '#ffd580', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{getActorDisplayName(dialogActor, true)}</div>
+                              </div>
+                              {/* 对话框面板：右侧固定，半透明毛玻璃，与大堂款式一致 */}
+                              <div style={{ position: 'absolute', right: 10, top: 10, bottom: 10, width: 240, background: 'rgba(18,10,6,0.52)', borderRadius: 16, border: '1px solid rgba(255,200,120,0.22)', boxShadow: '0 8px 32px rgba(0,0,0,0.32)', backdropFilter: 'blur(14px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', zIndex: 32, pointerEvents: 'auto', opacity: dialogMotion?.phase === 'closing' ? 0 : 1, transform: dialogMotion?.phase === 'closing' ? 'translateX(12px)' : 'translateX(0)', transition: 'opacity 0.24s ease, transform 0.24s ease' }} onClick={(e) => e.stopPropagation()}>
+                                {/* 顶栏 */}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px 7px', borderBottom: '1px solid rgba(255,200,120,0.12)', flexShrink: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ background: 'rgba(220,80,40,0.9)', color: '#fff', fontSize: 9, fontWeight: 900, padding: '1px 5px', borderRadius: 4 }}>厨师</span>
+                                    <span style={{ fontSize: 13, fontWeight: 900, color: '#ffd580' }}>{getActorDisplayName(dialogActor, true)}</span>
+                                  </div>
+                                  <button type="button" style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '50%', width: 22, height: 22, cursor: 'pointer', color: 'rgba(255,255,255,0.65)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={closeSceneDialog}>×</button>
+                                </div>
+                                {/* 消息列表 */}
+                                <div ref={sceneDialogScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 7, scrollBehavior: 'smooth' }}>
+                                  {msgs.filter((m) => m.content !== '').map((msg, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                                      <div style={{ maxWidth: '86%', padding: '6px 10px', borderRadius: msg.role === 'user' ? '13px 13px 4px 13px' : '13px 13px 13px 4px', background: msg.role === 'user' ? 'rgba(215,108,44,0.82)' : 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 11, lineHeight: 1.55, wordBreak: 'break-word' }}>
+                                        {msg.role === 'assistant' ? msg.content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() : msg.content}
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {isStreaming && (msgs[msgs.length - 1]?.content === '' || msgs[msgs.length - 1]?.role !== 'assistant') && (
+                                    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                                      <div style={{ padding: '6px 12px', borderRadius: '13px 13px 13px 4px', background: 'rgba(255,255,255,0.1)' }}>
+                                        <span style={{ display: 'inline-flex', gap: 3 }}>{[0,1,2].map((i) => <span key={i} style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#ffb060', opacity: 0.8, animation: `ops-bounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />)}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                                {/* 输入区 */}
+                                <div style={{ padding: '7px 9px', borderTop: '1px solid rgba(255,200,120,0.12)', display: 'flex', gap: 6, flexShrink: 0 }}>
+                                  <input type="text" placeholder="说点什么…" style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,200,120,0.2)', borderRadius: 8, padding: '6px 9px', fontSize: 11, color: '#ffe8c0', outline: 'none' }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { const val = e.currentTarget.value.trim(); if (!val || chatLoading) return; e.preventDefault(); e.currentTarget.value = ''; appendChatMessage(dialogActor, { role: 'user', content: val }); callActorAI(dialogActor, val); } }}
+                                  />
+                                  <button type="button" style={{ flexShrink: 0, background: 'rgba(215,108,44,0.75)', border: '1px solid rgba(255,180,90,0.3)', borderRadius: 8, padding: '6px 10px', fontSize: 11, fontWeight: 900, color: '#fff8e8', cursor: chatLoading ? 'default' : 'pointer', opacity: chatLoading ? 0.6 : 1 }}
+                                    onClick={(e) => { const input = (e.currentTarget.previousSibling as HTMLInputElement); const val = input?.value?.trim(); if (!val || chatLoading) return; input.value = ''; appendChatMessage(dialogActor, { role: 'user', content: val }); callActorAI(dialogActor, val); }}
+                                  >{chatLoading ? '…' : '发'}</button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                      </div>
+
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
-          <aside style={{ display: 'grid', gap: 12, alignSelf: 'start' }}>
-
-              {/* 今日战绩 — 木质招牌底 */}
+          <aside style={{ display: 'grid', gap: 14, alignSelf: 'start' }}>
+              {/* R4/R6：EATI 匹配 + 行动入口 — 信息分级重建 */}
               <div style={{
-                background: 'linear-gradient(145deg, #3b1f0a 0%, #2a1506 50%, #1e0f04 100%)',
-                borderRadius: 18,
-                border: '2px solid #6b3a1a',
-                boxShadow: '0 6px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,200,100,0.08)',
-                padding: '16px 18px 18px',
-                position: 'relative',
-                overflow: 'hidden',
+                borderRadius: 20,
+                padding: '16px 16px 18px',
+                background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
+                border: '1px solid rgba(255,210,150,0.1)',
+                boxShadow: '0 10px 28px rgba(0,0,0,0.18)',
               }}>
-                {/* 木纹纹理叠层 */}
-                <div style={{
-                  position: 'absolute', inset: 0, opacity: 0.06,
-                  backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,200,100,0.5) 3px, rgba(255,200,100,0.5) 4px)',
-                  pointerEvents: 'none',
-                }} />
-                {/* 钉子装饰 */}
-                {[{top:8,left:10},{top:8,right:10},{bottom:8,left:10},{bottom:8,right:10}].map((pos, i) => (
-                  <div key={i} style={{
-                    position: 'absolute', ...pos,
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: 'radial-gradient(circle at 35% 30%, #c8a060, #6b4010)',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.6)',
-                  }} />
-                ))}
-                {/* 标题 */}
-                <div style={{
-                  fontSize: 11, fontWeight: 900, color: '#ffa040', letterSpacing: 2,
-                  textTransform: 'uppercase', marginBottom: 12, textAlign: 'center',
-                  textShadow: '0 0 12px rgba(255,160,60,0.4)',
-                }}>
-                  🔥 今日战绩
-                </div>
-                {/* 大数字展示 */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  {[
-                    { label: '完成单量', value: opsSnapshot.completedOrders.toString(), unit: '单', hot: true },
-                    { label: '今日收入', value: `${Math.round(opsSnapshot.completedOrders * 68.9 / 100) * 100}`, unit: '元', hot: false },
-                    { label: '口碑评分', value: '4.2', unit: '分', hot: false },
-                    { label: '较昨日', value: '+12%', unit: '', hot: true },
-                  ].map(({ label, value, unit, hot }) => (
-                    <div key={label} style={{
-                      background: hot ? 'rgba(255,120,30,0.14)' : 'rgba(255,255,255,0.04)',
-                      border: hot ? '1px solid rgba(255,120,30,0.3)' : '1px solid rgba(255,255,255,0.06)',
-                      borderRadius: 10, padding: '10px 12px',
-                    }}>
-                      <div style={{ fontSize: 10, color: 'rgba(255,200,120,0.6)', marginBottom: 4 }}>{label}</div>
-                      <div style={{
-                        fontSize: hot ? 22 : 18, fontWeight: 900,
-                        color: hot ? '#ff9030' : '#ffeaaa',
-                        animation: hot ? 'ops-bounce 2.4s ease-in-out infinite' : 'none',
-                        display: 'inline-block',
-                      }}>
-                        {value}
-                        {unit && <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 2, color: 'rgba(255,200,100,0.55)' }}>{unit}</span>}
+                <EatiMatchTag shopId={shop.id} shopEatiCode={shop.eatiCode} />
+
+                {/* R6：行动按钮 — Eric Barone风格：简单符号传达复杂信息 */}
+                <div style={{ marginTop: 14, display: 'grid', gap: 8 }}>
+                  <button type="button" onClick={() => setMenuModalOpen(true)} style={{
+                    border: '1px solid rgba(255,198,120,0.3)',
+                    background: 'linear-gradient(135deg, rgba(255,190,110,0.18), rgba(255,130,60,0.1))',
+                    color: '#ffe5bf',
+                    borderRadius: 14,
+                    padding: '13px 16px',
+                    fontSize: 14,
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    transition: 'border-color 0.2s, background 0.2s',
+                  }}>
+                    <span style={{ fontSize: 20, flexShrink: 0 }}>📖</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.3 }}>看菜单 · 配套推荐</div>
+                      <div style={{ marginTop: 3, fontSize: 11, fontWeight: 500, color: 'rgba(255,226,192,0.5)', lineHeight: 1.4 }}>
+                        招牌菜 / 人均 · 仿单特惠
                       </div>
                     </div>
-                  ))}
+                    <span style={{ marginLeft: 'auto', fontSize: 14, color: 'rgba(255,210,150,0.45)', flexShrink: 0 }}>›</span>
+                  </button>
+
+                  <button type="button" disabled style={{
+                    border: '1px solid rgba(180,150,100,0.12)',
+                    background: 'rgba(255,255,255,0.025)',
+                    color: 'rgba(214,185,144,0.35)',
+                    borderRadius: 14,
+                    padding: '13px 16px',
+                    fontSize: 14,
+                    fontWeight: 900,
+                    cursor: 'not-allowed',
+                    textAlign: 'left',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                  }}>
+                    <span style={{ fontSize: 20, flexShrink: 0, opacity: 0.4 }}>👨‍🍳</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.3, opacity: 0.45 }}>进店打工</div>
+                      <div style={{ marginTop: 3, fontSize: 11, fontWeight: 500, color: 'rgba(214,185,144,0.3)', lineHeight: 1.4 }}>
+                        功能开发中，敬请期待
+                      </div>
+                    </div>
+                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'rgba(214,185,144,0.25)', flexShrink: 0 }}>即将上线</span>
+                  </button>
                 </div>
               </div>
 
-              {/* 出单结构 — 小黑板 */}
-              <div style={{
-                background: 'linear-gradient(160deg, #1a2a1a 0%, #0f1e0f 100%)',
-                borderRadius: 16,
-                border: '2px solid #2d4a2d',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-                padding: '14px 16px',
-                position: 'relative',
-              }}>
-                <div style={{ fontSize: 10, fontWeight: 900, color: '#7ecf7e', letterSpacing: 1.5, marginBottom: 10 }}>
-                  📋 出单结构
+              {/* 热卖榜 Top 3 */}
+              <CollapsePanel title="今日热卖榜" icon="🏆" defaultOpen={true} accentColor="#ffe082"
+                badge={opsSnapshot.topDishes.length > 3 ? (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowAllTopDishes((prev) => !prev); }}
+                    style={{
+                      border: '1px solid rgba(255,210,120,0.25)',
+                      background: 'rgba(255,220,120,0.1)',
+                      color: '#ffd98a',
+                      borderRadius: 999,
+                      padding: '3px 9px',
+                      fontSize: 9,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {showAllTopDishes ? `↑ 收起` : `↓ 前 10 名`}
+                  </button>
+                ) : undefined}
+              >
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {(showAllTopDishes ? opsSnapshot.topDishes : opsSnapshot.topDishes.slice(0, 3)).map((dish, i) => {
+                    const medal = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'][i] ?? `${i + 1}`;
+                    return (
+                      <div key={dish.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 8, background: i === 0 ? 'rgba(255,180,30,0.12)' : i === 1 ? 'rgba(200,200,200,0.06)' : 'rgba(200,120,50,0.08)', border: `1px solid rgba(${i === 0 ? '255,180,30' : i === 1 ? '180,180,180' : '200,120,50'},0.18)` }}>
+                        <span style={{ fontSize: 14, minWidth: 18, textAlign: 'center', flexShrink: 0 }}>{medal}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#ffeaaa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dish.name}</div>
+                          {i === 0 && <div style={{ fontSize: 9, color: 'rgba(255,200,100,0.5)', marginTop: 1 }}>今日爆款</div>}
+                          {i === 1 && <div style={{ fontSize: 9, color: 'rgba(180,180,180,0.4)', marginTop: 1 }}>回头客最爱</div>}
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: '#ff9030', flexShrink: 0 }}>{dish.count}</div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div style={{ display: 'grid', gap: 7 }}>
+              </CollapsePanel>
+
+              {/* 出单结构 — 可折叠 */}
+              <CollapsePanel title="出单结构" icon="📋" defaultOpen={true} accentColor="#7ecf7e">
+                <div style={{ display: 'grid', gap: 8 }}>
                   {[
                     { label: '堂食', value: `${opsSnapshot.dineInOrders} 单`, tag: '稳定', tagColor: '#4ade80' },
                     { label: '外卖', value: `${opsSnapshot.deliveryOrders} 单`, tag: shop.crowdLevel === 'packed' ? '忙不过来' : '火爆', tagColor: '#fb923c' },
                     { label: '高峰等位', value: `约 ${opsSnapshot.queueTime} 分钟`, tag: opsSnapshot.queueTime >= 20 ? '爆满' : opsSnapshot.queueTime >= 10 ? '较忙' : '顺畅', tagColor: opsSnapshot.queueTime >= 20 ? '#f87171' : opsSnapshot.queueTime >= 10 ? '#fbbf24' : '#4ade80' },
                     { label: '大堂承载', value: `${opsSnapshot.hallSeats} 位`, tag: shop.crowdLevel === 'packed' ? '爆满' : '正常', tagColor: shop.crowdLevel === 'packed' ? '#f87171' : '#4ade80' },
                   ].map(({ label, value, tag, tagColor }) => (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, color: 'rgba(200,230,200,0.7)' }}>{label}</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: '#d4f0d4' }}>{value}</span>
+                    <div key={label} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '7px 10px',
+                      borderRadius: 10,
+                      background: 'rgba(255,255,255,0.025)',
+                      border: '1px solid rgba(255,255,255,0.05)',
+                    }}>
+                      <span style={{ fontSize: 11, color: 'rgba(200,230,200,0.65)', fontWeight: 500 }}>{label}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: '#d4f0d4' }}>{value}</span>
                         <span style={{
-                          fontSize: 9, fontWeight: 900, padding: '1px 6px',
-                          borderRadius: 4,
-                          background: tagColor + '55', border: `1px solid ${tagColor}88`,
+                          fontSize: 9, fontWeight: 900, padding: '2px 7px',
+                          borderRadius: 5,
+                          background: tagColor + '33', border: `1px solid ${tagColor}66`,
                           color: tagColor,
                         }}>{tag}</span>
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsePanel>
 
-              {/* 热销菜品 Top 10 — 手写贴榜风格 */}
-              <div style={{
-                background: 'linear-gradient(150deg, #2c1a08 0%, #1e1005 100%)',
-                borderRadius: 16,
-                border: '2px solid #5a320e',
-                boxShadow: '0 4px 18px rgba(0,0,0,0.45)',
-                padding: '14px 16px 16px',
-                position: 'relative',
-                overflow: 'hidden',
-              }}>
-                {/* 粉笔字标题 */}
-                <div style={{
-                  fontSize: 11, fontWeight: 900, color: '#ffe082', letterSpacing: 1.5,
-                  marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>🏆 今日热卖榜</span>
-                    <span style={{ fontSize: 9, color: 'rgba(255,220,100,0.45)', fontWeight: 400 }}>老板亲推</span>
-                  </div>
-                  {opsSnapshot.topDishes.length > 3 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllTopDishes((prev) => !prev)}
-                      style={{
-                        border: '1px solid rgba(255,210,120,0.2)',
-                        background: 'rgba(255,220,120,0.08)',
-                        color: '#ffd98a',
-                        borderRadius: 999,
-                        padding: '4px 10px',
-                        fontSize: 10,
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                        lineHeight: 1,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {showAllTopDishes ? '↑ 收起' : '↓ 前 10 名'}
-                    </button>
-                  )}
-                </div>
-
-                <div style={{ display: 'grid', gap: 5 }}>
-                  {(showAllTopDishes ? opsSnapshot.topDishes : opsSnapshot.topDishes.slice(0, 3)).map((dish, i) => {
-                    const isTop3 = i < 3;
-                    const medal = ['🥇','🥈','🥉'][i] ?? `${i+1}.`;
-                    const tags = [
-                      '今日爆款', '回头客最爱', '老板推荐',
-                      '人气上升', '必点单品', '夜宵神器',
-                      '新客首选', '团购热门', '性价比王', '福利精选',
-                    ][i];
-                    return (
-                      <div key={dish.name} style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: isTop3 ? '7px 10px' : '5px 8px',
-                        borderRadius: 8,
-                        background: isTop3
-                          ? i === 0 ? 'rgba(255,180,30,0.15)' : i === 1 ? 'rgba(200,200,200,0.08)' : 'rgba(200,120,50,0.1)'
-                          : 'transparent',
-                        border: isTop3 ? `1px solid rgba(${i === 0 ? '255,180,30' : i === 1 ? '180,180,180' : '200,120,50'},0.2)` : 'none',
-                        animation: isTop3 ? 'ops-breathe 3s ease-in-out infinite' : 'none',
-                        animationDelay: `${i * 0.4}s`,
-                      }}>
-                        <span style={{
-                          fontSize: isTop3 ? 15 : 11, minWidth: isTop3 ? 20 : 16,
-                          textAlign: 'center', flexShrink: 0,
-                          filter: isTop3 ? 'none' : 'none',
-                        }}>{medal}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{
-                            fontSize: isTop3 ? 12 : 11,
-                            fontWeight: isTop3 ? 700 : 400,
-                            color: isTop3 ? '#ffeaaa' : 'rgba(255,220,160,0.7)',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>{dish.name}</div>
-                          {isTop3 && (
-                            <div style={{ fontSize: 9, color: 'rgba(255,180,60,0.6)', marginTop: 1 }}>{tags}</div>
-                          )}
-                        </div>
-                        <div style={{
-                          fontSize: isTop3 ? 14 : 11, fontWeight: 900,
-                          color: isTop3 ? '#ff9030' : 'rgba(255,180,60,0.55)',
-                          flexShrink: 0,
-                          animation: isTop3 ? 'ops-bounce 2s ease-in-out infinite' : 'none',
-                          animationDelay: `${i * 0.3}s`,
-                        }}>{dish.count}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 员工吐槽 NPC气泡 */}
-              <div style={{
-                background: 'linear-gradient(135deg, #2a1a08 0%, #1c1008 100%)',
-                borderRadius: 16,
-                border: '1.5px solid rgba(200,140,60,0.2)',
-                padding: '13px 15px',
-              }}>
-                <div style={{ fontSize: 10, color: '#d4a060', fontWeight: 900, letterSpacing: 1, marginBottom: 10 }}>
-                  💬 店员播报
-                </div>
-                <div style={{ display: 'grid', gap: 7 }}>
+              {/* 热销菜品 Top 10 — 可折叠 */}
+              {/* 店员播报 — 可折叠 */}
+              <CollapsePanel title="店员播报" icon="💬" defaultOpen={true} accentColor="#d4a060">
+                <div style={{ display: 'grid', gap: 8 }}>
                   {[
                     { icon: '🦞', text: `老板，${opsSnapshot.topDishes[0]?.name ?? '青花椒'}又卖爆了！` },
                     { icon: '🛵', text: `外卖骑手快忙不过来了！` },
                     { icon: '🪑', text: `现在排队有点久，要不要先推冒桶？` },
                   ].map(({ icon, text }, i) => (
                     <div key={i} style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 8,
+                      display: 'flex', alignItems: 'flex-start', gap: 9,
+                      padding: '7px 10px',
+                      borderRadius: 10,
+                      background: 'rgba(255,200,100,0.05)',
+                      border: '1px solid rgba(255,200,100,0.1)',
                       animation: 'ops-float 3.5s ease-in-out infinite',
                       animationDelay: `${i * 1.1}s`,
                     }}>
-                      <span style={{ fontSize: 15, flexShrink: 0, lineHeight: 1.4 }}>{icon}</span>
+                      <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.3 }}>{icon}</span>
                       <div style={{
-                        background: 'rgba(255,200,100,0.08)',
-                        border: '1px solid rgba(255,200,100,0.14)',
-                        borderRadius: '10px 10px 10px 2px',
-                        padding: '6px 10px',
-                        fontSize: 11, color: 'rgba(255,220,150,0.85)', lineHeight: 1.5,
+                        fontSize: 11, color: 'rgba(255,220,150,0.88)', lineHeight: 1.55,
                       }}>{text}</div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsePanel>
 
-              {/* 突发提醒 — 红色便利贴 */}
-              <div style={{
-                background: 'linear-gradient(135deg, #3a0a0a 0%, #280808 100%)',
-                borderRadius: 14,
-                border: '1.5px solid rgba(255,80,60,0.3)',
-                padding: '12px 14px',
-                boxShadow: '0 2px 12px rgba(255,60,40,0.12)',
-              }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 900, color: '#f87171', letterSpacing: 1, marginBottom: 9,
-                  display: 'flex', alignItems: 'center', gap: 5,
-                }}>
-                  <span style={{ animation: 'ops-flash 1.5s ease-in-out infinite' }}>⚠️</span>
-                  <span>突发提醒</span>
-                </div>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  {[
-                    `排队超过 ${opsSnapshot.queueTime} 分钟`,
-                    `外卖配送延迟 3 单`,
-                    `双人套餐库存紧张`,
-                  ].map((alert, i) => (
-                    <div key={i} style={{
-                      display: 'flex', alignItems: 'center', gap: 7,
-                      fontSize: 11, color: 'rgba(255,180,160,0.85)',
-                    }}>
-                      <span style={{ color: '#f87171', fontSize: 9, flexShrink: 0 }}>●</span>
-                      {alert}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* 玩家操作面板 — 老板控制台 */}
-              <div style={{
-                background: 'linear-gradient(145deg, #1e0e00 0%, #150900 100%)',
-                borderRadius: 18,
-                border: '2px solid rgba(255,180,60,0.25)',
-                boxShadow: '0 6px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,200,80,0.06)',
-                padding: '16px 18px 18px',
-                position: 'relative',
-                overflow: 'hidden',
-              }}>
-                {/* 木纹叠层 */}
-                <div style={{
-                  position: 'absolute', inset: 0, opacity: 0.04,
-                  backgroundImage: 'repeating-linear-gradient(5deg, transparent, transparent 5px, rgba(255,200,80,0.6) 5px, rgba(255,200,80,0.6) 6px)',
-                  pointerEvents: 'none',
-                }} />
-                {/* 铜钉 */}
-                {[{top:7,left:8},{top:7,right:8},{bottom:7,left:8},{bottom:7,right:8}].map((pos, i) => (
-                  <div key={i} style={{
-                    position: 'absolute', ...pos,
-                    width: 7, height: 7, borderRadius: '50%',
-                    background: 'radial-gradient(circle at 35% 30%, #d4a050, #6b3a08)',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.7)',
-                  }} />
-                ))}
-                <div style={{
-                  fontSize: 11, fontWeight: 900, color: '#ffaa40', letterSpacing: 2,
-                  marginBottom: 14, textAlign: 'center',
-                  textShadow: '0 0 12px rgba(255,160,40,0.35)',
-                }}>
-                  🎛️ 老板决策台
-                </div>
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {/* 提价操作 */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!playerOps.priceRaised) {
-                        setPlayerOps((prev) => ({ ...prev, priceRaised: true }));
-                        setPoints((prev) => {
-                          const next = Math.min(999, prev + 15);
-                          localStorage.setItem('world:points', String(next));
-                          return next;
-                        });
-                      }
-                    }}
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 12,
-                      border: playerOps.priceRaised ? '1px solid rgba(255,180,40,0.35)' : '1px solid rgba(255,255,255,0.1)',
-                      background: playerOps.priceRaised
-                        ? 'linear-gradient(135deg, rgba(255,180,40,0.2), rgba(255,120,20,0.12))'
-                        : 'rgba(255,255,255,0.04)',
-                      color: playerOps.priceRaised ? '#ffd060' : 'rgba(255,220,140,0.6)',
-                      cursor: playerOps.priceRaised ? 'default' : 'pointer',
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      textAlign: 'left',
-                    }}
-                  >
-                    <span style={{ fontSize: 18, flexShrink: 0 }}>📈</span>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.3 }}>
-                        {playerOps.priceRaised ? '✅ 菜价已上调' : '上调菜价 10%'}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'rgba(255,200,100,0.5)', marginTop: 2 }}>
-                        {playerOps.priceRaised ? '今日均价上浮，利润+8%' : '高峰期可提升营收'}
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* 外卖优先 */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!playerOps.deliveryPriority) {
-                        setPlayerOps((prev) => ({ ...prev, deliveryPriority: true }));
-                        setPoints((prev) => {
-                          const next = Math.min(999, prev + 12);
-                          localStorage.setItem('world:points', String(next));
-                          return next;
-                        });
-                      }
-                    }}
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 12,
-                      border: playerOps.deliveryPriority ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(255,255,255,0.1)',
-                      background: playerOps.deliveryPriority
-                        ? 'linear-gradient(135deg, rgba(74,222,128,0.15), rgba(20,180,100,0.08))'
-                        : 'rgba(255,255,255,0.04)',
-                      color: playerOps.deliveryPriority ? '#86efac' : 'rgba(255,220,140,0.6)',
-                      cursor: playerOps.deliveryPriority ? 'default' : 'pointer',
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      textAlign: 'left',
-                    }}
-                  >
-                    <span style={{ fontSize: 18, flexShrink: 0 }}>🛵</span>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.3 }}>
-                        {playerOps.deliveryPriority ? '✅ 外卖已优先' : '开启外卖优先'}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'rgba(255,200,100,0.5)', marginTop: 2 }}>
-                        {playerOps.deliveryPriority ? '出餐速度+15%，延迟降低' : '减少外卖配送延迟'}
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* 激活福利池 */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!playerOps.bonusPool) {
-                        setPlayerOps((prev) => ({ ...prev, bonusPool: true }));
-                        setPoints((prev) => {
-                          const next = Math.min(999, prev + 25);
-                          localStorage.setItem('world:points', String(next));
-                          return next;
-                        });
-                      }
-                    }}
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 12,
-                      border: playerOps.bonusPool ? '1px solid rgba(248,113,113,0.4)' : '1px solid rgba(255,255,255,0.1)',
-                      background: playerOps.bonusPool
-                        ? 'linear-gradient(135deg, rgba(248,113,113,0.2), rgba(220,60,60,0.12))'
-                        : 'rgba(255,255,255,0.04)',
-                      color: playerOps.bonusPool ? '#fca5a5' : 'rgba(255,220,140,0.6)',
-                      cursor: playerOps.bonusPool ? 'default' : 'pointer',
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      textAlign: 'left',
-                    }}
-                  >
-                    <span style={{ fontSize: 18, flexShrink: 0 }}>🎰</span>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.3 }}>
-                        {playerOps.bonusPool ? '✅ 福利池已激活' : '激活老板福利池'}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'rgba(255,200,100,0.5)', marginTop: 2 }}>
-                        {playerOps.bonusPool ? `免单概率提升至 ${Math.min(99, opsSnapshot.ownerFreeMealChance + 15)}%` : '免单概率提升 15%'}
-                      </div>
-                    </div>
-                  </button>
-                </div>
-
-                {/* 积分显示 */}
-                <div style={{
-                  marginTop: 14, paddingTop: 10,
-                  borderTop: '1px solid rgba(255,180,60,0.1)',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                }}>
-                  <span style={{ fontSize: 11, color: 'rgba(255,200,100,0.5)' }}>💰 当前积分</span>
-                  <span style={{
-                    fontSize: 16, fontWeight: 900, color: '#ffd060',
-                    animation: 'ops-bounce 2s ease-in-out infinite',
-                    display: 'inline-block',
-                  }}>{points}</span>
-                </div>
-              </div>
 
             </aside>
           </section>
 
         <style jsx>{`
+          .shop-hero-grid {
+            grid-template-columns: minmax(0, 1fr) auto;
+          }
+
           .shop-detail-layout {
-            grid-template-columns: minmax(0, 1.5fr) minmax(320px, 420px);
+            grid-template-columns: minmax(0, 1.5fr) minmax(300px, 400px);
             align-items: start;
+          }
+
+          /* 后厨看板：大屏横排 */
+          .kitchen-dashboard {
+            display: flex;
+            flex-direction: row;
+            gap: 14px;
+            align-items: flex-start;
+            flex-wrap: wrap;
           }
 
           .scene-stage {
@@ -3625,16 +3832,47 @@ export default function ShopDetailClient({ shopId }: ShopDetailClientProps) {
           .expanded-dialog-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(255,200,100,0.55) 0%, rgba(200,120,40,0.45) 100%); border-radius: 99px; }
           .expanded-dialog-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(255,210,120,0.75) 0%, rgba(220,130,50,0.65) 100%); }
 
-          @media (max-width: 1180px) {
+          @media (max-width: 1100px) {
             .shop-detail-layout {
               grid-template-columns: 1fr;
             }
           }
 
+          @media (max-width: 800px) {
+            /* 中等屏幕：后厨看板堆叠 */
+            .kitchen-dashboard {
+              flex-direction: column !important;
+            }
+            .kitchen-dashboard > div {
+              flex: 1 1 auto !important;
+              width: 100% !important;
+            }
+          }
+
           @media (max-width: 720px) {
+            .shop-hero-topbar {
+              align-items: stretch;
+            }
+
+            .shop-hero-grid {
+              grid-template-columns: 1fr;
+            }
+
+            .shop-hero-metrics {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
             .scene-header {
               flex-direction: column;
               align-items: stretch;
+            }
+
+            /* 手机：一切堆叠为单列 */
+            .shop-detail-layout {
+              grid-template-columns: 1fr;
+            }
+            .kitchen-dashboard {
+              flex-direction: column !important;
             }
           }
         .menu-modal-scroll::-webkit-scrollbar { width: 6px; }

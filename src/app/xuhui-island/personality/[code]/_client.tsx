@@ -1,164 +1,302 @@
 'use client';
 
-/**
- * EATI 人格判决书页面 —— 游戏大师联合设计版
- * 高橋幸嗣(动森) × Phil Duncan(胡闹厨房) × Eric Barone(星露谷)
- *
- * 特性：
- *  - 人格名字符逐个「掉落」入场
- *  - 雷达图顶点从中心「弹射」出来
- *  - 全局暖沙底色 #FFF9F0
- *  - 5档契合度视觉系统（金/绿/蓝/紫/橙）
- */
-
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import {
   getPersonality,
+  loadEatiResult,
   matchShops,
   parseCode,
-  loadEatiResult,
   type ShopMatchResult,
 } from '@/lib/eati';
 import { XUHUI_SHOPS } from '@/config/xuhui-shops';
-import { track } from '@/lib/tracker';
 import { playAudioFile } from '@/lib/sound';
+import { track } from '@/lib/tracker';
 
-function playTap() { playAudioFile('/usual.mp3', 0.5); }
+function playTap() {
+  playAudioFile('/usual.mp3', 0.5);
+}
 
-// ── 人格名字掉落动画组件 ──────────────────────────────────────────
+type MatchGrade = ShopMatchResult['grade'];
+
+const SHELL_BG =
+  'radial-gradient(circle at top left, rgba(245,169,75,0.22), transparent 28%), radial-gradient(circle at 85% 14%, rgba(48,182,163,0.18), transparent 24%), linear-gradient(180deg, #140d08 0%, #1b120d 42%, #120b10 100%)';
+
+const PANEL_BG = 'linear-gradient(180deg, rgba(42,28,21,0.92), rgba(24,17,14,0.92))';
+const PANEL_BORDER = '1px solid rgba(255, 225, 176, 0.12)';
+const CARD_BG = 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.04))';
+const CARD_BORDER = '1px solid rgba(255,255,255,0.1)';
+const SOFT_SHADOW = '0 22px 60px rgba(0,0,0,0.28)';
+const DIM_LABELS_MAP: Record<string, string> = { A: '口味', B: '探索', C: '精致', D: '决策' };
+
+const DIMENSION_META = {
+  A: {
+    title: '口味雷达',
+    low: '清爽派',
+    high: '重口派',
+    color: '#ff8b66',
+  },
+  B: {
+    title: '探索欲',
+    low: '熟悉更稳',
+    high: '新鲜优先',
+    color: '#45d6b5',
+  },
+  C: {
+    title: '精致度',
+    low: '随意好吃',
+    high: '讲究体验',
+    color: '#f8b34f',
+  },
+  D: {
+    title: '决策模式',
+    low: '当机立断',
+    high: '慢慢筛选',
+    color: '#bf7cff',
+  },
+} as const;
+
+const GRADE_CONFIG: Record<
+  MatchGrade,
+  {
+    accent: string;
+    accentSoft: string;
+    pill: string;
+    pillColor: string;
+    label: string;
+    hint: string;
+    buttonBg: string;
+    buttonColor: string;
+    buttonShadow: string;
+  }
+> = {
+  destiny: {
+    accent: '#f8bd53',
+    accentSoft: 'rgba(248,189,83,0.18)',
+    pill: 'linear-gradient(135deg, #f5a53b, #ffd667)',
+    pillColor: '#472600',
+    label: '天命之选',
+    hint: '几乎像为你预设',
+    buttonBg: 'linear-gradient(135deg, #f8bd53, #ff9e2b)',
+    buttonColor: '#402200',
+    buttonShadow: '0 14px 28px rgba(248,189,83,0.22)',
+  },
+  great: {
+    accent: '#37d5aa',
+    accentSoft: 'rgba(55,213,170,0.16)',
+    pill: 'linear-gradient(135deg, #2bcfa1, #4ae4bf)',
+    pillColor: '#08251d',
+    label: '高度契合',
+    hint: '大概率会一口入坑',
+    buttonBg: 'linear-gradient(135deg, #2bcfa1, #45f0bb)',
+    buttonColor: '#07281f',
+    buttonShadow: '0 14px 28px rgba(55,213,170,0.2)',
+  },
+  good: {
+    accent: '#62a8ff',
+    accentSoft: 'rgba(98,168,255,0.16)',
+    pill: 'linear-gradient(135deg, #5b9bff, #7ec1ff)',
+    pillColor: '#08203d',
+    label: '值得一试',
+    hint: '这顿吃它不会难受',
+    buttonBg: 'rgba(98,168,255,0.14)',
+    buttonColor: '#d9e9ff',
+    buttonShadow: 'none',
+  },
+  contrast: {
+    accent: '#c287ff',
+    accentSoft: 'rgba(194,135,255,0.16)',
+    pill: 'linear-gradient(135deg, #ad74ff, #d19cff)',
+    pillColor: '#241237',
+    label: '反差体验',
+    hint: '换口味时可以冒一次险',
+    buttonBg: 'rgba(194,135,255,0.12)',
+    buttonColor: '#f0ddff',
+    buttonShadow: 'none',
+  },
+  challenge: {
+    accent: '#8d7768',
+    accentSoft: 'rgba(184,165,150,0.12)',
+    pill: 'linear-gradient(135deg, rgba(176,154,135,0.35), rgba(122,102,92,0.55))',
+    pillColor: '#fff0dc',
+    label: '饭搭子带你去',
+    hint: '有人带你反而会更好玩',
+    buttonBg: 'rgba(255,255,255,0.08)',
+    buttonColor: 'rgba(255,245,230,0.78)',
+    buttonShadow: 'none',
+  },
+};
+
+function getDimensionCards(code: string) {
+  const dims = parseCode(code);
+  return (Object.entries(dims) as Array<[keyof typeof dims, 'H' | 'L']>).map(([key, value]) => {
+    const meta = DIMENSION_META[key];
+    return {
+      key,
+      color: meta.color,
+      title: meta.title,
+      value,
+      label: value === 'H' ? meta.high : meta.low,
+    };
+  });
+}
+
 function FallingTitle({ text }: { text: string }) {
   const [visible, setVisible] = useState<boolean[]>(Array(text.length).fill(false));
 
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
-    text.split('').forEach((_, i) => {
-      const t = setTimeout(() => {
+    text.split('').forEach((_, index) => {
+      const timer = setTimeout(() => {
         setVisible((prev) => {
           const next = [...prev];
-          next[i] = true;
+          next[index] = true;
           return next;
         });
-      }, 300 + i * 80);
-      timers.push(t);
+      }, 240 + index * 70);
+      timers.push(timer);
     });
+
     return () => timers.forEach(clearTimeout);
   }, [text]);
 
   return (
-    <div style={{ display: 'inline-block' }}>
-      {text.split('').map((char, i) => (
+    <span style={{ display: 'inline-block' }}>
+      {text.split('').map((char, index) => (
         <span
-          key={i}
+          key={`${char}-${index}`}
           style={{
             display: 'inline-block',
-            opacity: visible[i] ? 1 : 0,
-            transform: visible[i] ? 'translateY(0) rotate(0deg)' : 'translateY(-24px) rotate(-8deg)',
-            transition: 'all 400ms cubic-bezier(.34,1.56,.64,1)',
+            opacity: visible[index] ? 1 : 0,
+            transform: visible[index]
+              ? 'translateY(0) rotate(0deg)'
+              : 'translateY(-18px) rotate(-6deg)',
+            transition: 'all 420ms cubic-bezier(.2, .9, .2, 1.2)',
           }}
         >
           {char}
         </span>
       ))}
-    </div>
+    </span>
   );
 }
 
-// ── 四维雷达图（顶点弹射动效）────────────────────────────────────
-interface RadarChartProps { code: string; }
-
-function RadarChart({ code }: RadarChartProps) {
+function RadarChart({ code }: { code: string }) {
   const dims = parseCode(code);
   const [animated, setAnimated] = useState(false);
-  const size = 180;
-  const cx = size / 2;
-  const cy = size / 2;
-  const maxR = 68;
+  const size = 220;
+  const center = size / 2;
+  const maxRadius = 74;
 
   useEffect(() => {
-    const t = setTimeout(() => setAnimated(true), 600);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setAnimated(true), 350);
+    return () => clearTimeout(timer);
   }, []);
 
   const axes = [
-    { label: 'A 重口度', angle: -90, bit: dims.A, color: '#ff5252', emoji: '🌶️' },
-    { label: 'B 探索欲', angle: 0,   bit: dims.B, color: '#00c87a', emoji: '🗺️' },
-    { label: 'C 精细度', angle: 90,  bit: dims.C, color: '#ff9800', emoji: '✨' },
-    { label: 'D 确定性', angle: 180, bit: dims.D, color: '#9c27b0', emoji: '🎯' },
-  ];
+    { key: 'A', label: '重口', angle: -90, bit: dims.A, color: '#ff8860' },
+    { key: 'B', label: '探索', angle: 0, bit: dims.B, color: '#34d9af' },
+    { key: 'C', label: '精致', angle: 90, bit: dims.C, color: '#ffbf54' },
+    { key: 'D', label: '决策', angle: 180, bit: dims.D, color: '#bf7cff' },
+  ] as const;
 
-  function polar(angleDeg: number, r: number) {
+  const polar = (angleDeg: number, radius: number) => {
     const rad = (angleDeg * Math.PI) / 180;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-  }
+    return { x: center + radius * Math.cos(rad), y: center + radius * Math.sin(rad) };
+  };
 
-  const gridLevels = [0.25, 0.5, 0.75, 1.0];
-  const gridPolygons = gridLevels.map((level) =>
-    axes.map(({ angle }) => {
-      const p = polar(angle, maxR * level);
-      return `${p.x},${p.y}`;
-    }).join(' ')
+  const levels = [0.3, 0.55, 0.78, 1];
+  const polygons = levels.map((level) =>
+    axes
+      .map(({ angle }) => {
+        const point = polar(angle, maxRadius * level);
+        return `${point.x},${point.y}`;
+      })
+      .join(' ')
   );
 
-  // 动画：从中心弹射
-  const targetPoints = axes.map(({ angle, bit }) => {
-    const r = bit === 'H' ? maxR : maxR * 0.42;
-    return polar(angle, r);
-  });
-  const centerPoints = axes.map(() => ({ x: cx, y: cy }));
-  const dataPoints = animated ? targetPoints : centerPoints;
-  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(' ');
+  const targetPoints = axes.map(({ angle, bit }) => polar(angle, bit === 'H' ? maxRadius : maxRadius * 0.42));
+  const currentPoints = animated ? targetPoints : axes.map(() => ({ x: center, y: center }));
+  const polygonPoints = currentPoints.map((point) => `${point.x},${point.y}`).join(' ');
 
   return (
-    <div style={{ position: 'relative', width: size + 60, height: size + 50, margin: '0 auto' }}>
-      <svg
-        width={size + 60}
-        height={size + 50}
-        viewBox={`-30 -25 ${size + 60} ${size + 50}`}
-        style={{ overflow: 'visible' }}
-      >
-        {/* 背景圆形 */}
-        <circle cx={cx} cy={cy} r={maxR + 5} fill="rgba(255,152,0,0.06)" stroke="rgba(255,152,0,0.2)" strokeWidth={1} />
-        {/* 网格 */}
-        {gridPolygons.map((pts, i) => (
-          <polygon key={i} points={pts} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={0.8} />
-        ))}
-        {/* 轴线 */}
-        {axes.map(({ angle, color }, i) => {
-          const outer = polar(angle, maxR);
-          return (
-            <line key={i} x1={cx} y1={cy} x2={outer.x} y2={outer.y}
-              stroke={`${color}60`} strokeWidth={1} strokeDasharray="3 3" />
-          );
-        })}
-        {/* 数据多边形 */}
-        <polygon
-          points={dataPolygon}
-          fill="rgba(255,152,0,0.15)"
-          stroke="rgba(255,82,82,0.8)"
-          strokeWidth={2.5}
-          style={{ transition: 'all 600ms cubic-bezier(.34,1.56,.64,1)' }}
-        />
-        {/* 数据点 */}
-        {dataPoints.map((p, i) => (
-            <circle key={i} cx={p.x} cy={p.y} r={animated ? 7 : 2}
-            fill={axes[i].color} stroke="rgba(255,255,255,0.3)" strokeWidth={2}
-            style={{ transition: `all 600ms cubic-bezier(.34,1.56,.64,1) ${i * 80}ms` }}
+    <div
+      style={{
+        position: 'relative',
+        display: 'grid',
+        placeItems: 'center',
+        padding: 22,
+        borderRadius: 28,
+        background:
+          'radial-gradient(circle at center, rgba(248,189,83,0.12), rgba(255,255,255,0.02) 55%, transparent 75%)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <svg width={size + 76} height={size + 76} viewBox={`-38 -38 ${size + 76} ${size + 76}`}>
+        <defs>
+          <linearGradient id="radarFill" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="rgba(255,190,98,0.34)" />
+            <stop offset="100%" stopColor="rgba(57,213,171,0.18)" />
+          </linearGradient>
+        </defs>
+        <circle cx={center} cy={center} r={maxRadius + 14} fill="rgba(255,255,255,0.03)" />
+        {polygons.map((points, index) => (
+          <polygon
+            key={points}
+            points={points}
+            fill="none"
+            stroke={index === polygons.length - 1 ? 'rgba(255,225,176,0.24)' : 'rgba(255,255,255,0.08)'}
+            strokeWidth={1}
           />
         ))}
-        {/* 轴标签 */}
-        {axes.map(({ angle, label, bit, color }, i) => {
-          const lp = polar(angle, maxR + 26);
-          const isLeft = angle === 180;
-          const isRight = angle === 0;
+        {axes.map(({ angle, color, key }) => {
+          const outer = polar(angle, maxRadius);
           return (
-            <text key={i} x={lp.x} y={lp.y + 4}
-              textAnchor={isLeft ? 'end' : isRight ? 'start' : 'middle'}
-              fontSize={10} fontWeight={900} fill={color}>
-              {label}{' '}
-              <tspan fill={bit === 'H' ? '#ff7b6b' : 'rgba(255,255,255,0.3)'} fontSize={11} fontWeight={900}>
-                {bit}
-              </tspan>
+            <line
+              key={key}
+              x1={center}
+              y1={center}
+              x2={outer.x}
+              y2={outer.y}
+              stroke={`${color}70`}
+              strokeWidth={1.4}
+              strokeDasharray="4 5"
+            />
+          );
+        })}
+        <polygon
+          points={polygonPoints}
+          fill="url(#radarFill)"
+          stroke="rgba(255,216,138,0.95)"
+          strokeWidth={2.2}
+          style={{ transition: 'all 680ms cubic-bezier(.18, 1.1, .24, 1)' }}
+        />
+        {currentPoints.map((point, index) => (
+          <circle
+            key={`${point.x}-${point.y}-${index}`}
+            cx={point.x}
+            cy={point.y}
+            r={animated ? 7 : 2}
+            fill={axes[index].color}
+            stroke="rgba(255,255,255,0.32)"
+            strokeWidth={2}
+            style={{ transition: `all 680ms cubic-bezier(.18, 1.1, .24, 1) ${index * 70}ms` }}
+          />
+        ))}
+        {axes.map(({ angle, label, bit, color, key }) => {
+          const point = polar(angle, maxRadius + 28);
+          const textAnchor = angle === 180 ? 'end' : angle === 0 ? 'start' : 'middle';
+          return (
+            <text
+              key={key}
+              x={point.x}
+              y={point.y + 4}
+              textAnchor={textAnchor}
+              fontSize={11}
+              fontWeight={800}
+              fill={color}
+            >
+              {label} {bit}
             </text>
           );
         })}
@@ -167,173 +305,232 @@ function RadarChart({ code }: RadarChartProps) {
   );
 }
 
-// ── 5档契合度配置（Coze 极简版）──────────────────────────────────────
-const GRADE_CONFIG: Record<string, {
-  accent: string;      // 左边框 accent 色
-  accentAlpha: string; // 背景淡晕
-  pill: string;        // 胶囊渐变
-  pillColor: string;
-  label: string;
-  ctaBg: string;
-  ctaColor: string;
-  ctaGlow: string;
-}> = {
-  destiny: {
-    accent: '#F5A623',
-    accentAlpha: 'rgba(245,166,35,0.06)',
-    pill: 'linear-gradient(90deg,#F5A623,#F7C948)',
-    pillColor: '#fff',
-    label: '👑 天命之选',
-    ctaBg: 'linear-gradient(90deg,#F5A623,#F7C948)',
-    ctaColor: '#fff',
-    ctaGlow: '0 4px 14px rgba(245,166,35,0.4)',
-  },
-  great: {
-    accent: '#2ECC9A',
-    accentAlpha: 'rgba(46,204,154,0.05)',
-    pill: 'linear-gradient(90deg,#2ECC9A,#26de81)',
-    pillColor: '#fff',
-    label: '🔥 高度契合',
-    ctaBg: 'linear-gradient(90deg,#2ECC9A,#26de81)',
-    ctaColor: '#fff',
-    ctaGlow: '0 4px 14px rgba(46,204,154,0.35)',
-  },
-  good: {
-    accent: '#4E9EF5',
-    accentAlpha: 'rgba(78,158,245,0.04)',
-    pill: 'linear-gradient(90deg,#4E9EF5,#6ab0f5)',
-    pillColor: '#fff',
-    label: '✨ 值得一试',
-    ctaBg: 'rgba(78,158,245,0.12)',
-    ctaColor: '#4E9EF5',
-    ctaGlow: 'none',
-  },
-  contrast: {
-    accent: '#A55EEA',
-    accentAlpha: 'rgba(165,94,234,0.05)',
-    pill: 'linear-gradient(90deg,#A55EEA,#8854d0)',
-    pillColor: '#fff',
-    label: '⚡ 反差体验',
-    ctaBg: 'rgba(165,94,234,0.12)',
-    ctaColor: '#A55EEA',
-    ctaGlow: 'none',
-  },
-  challenge: {
-    accent: 'rgba(0,0,0,0.12)',
-    accentAlpha: 'rgba(0,0,0,0.02)',
-    pill: 'rgba(0,0,0,0.08)',
-    pillColor: '#999',
-    label: '🤝 饭搭子带你去',
-    ctaBg: 'transparent',
-    ctaColor: '#bbb',
-    ctaGlow: 'none',
-  },
-};
-
-const DIM_LABELS_MAP: Record<string, string> = { A: '口味', B: '探索', C: '精致', D: '确定' };
-
-// ── 商户匹配卡片（Coze × 乔布斯极简版）──────────────────────────────
-function ShopCard({ result, onVisit }: { result: ShopMatchResult; onVisit: (id: string) => void }) {
-  const shop = XUHUI_SHOPS.find((s) => s.id === result.shopId);
-  const cfg = GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.good;
-  const isBuddy = result.grade === 'challenge';
-
+function SectionHeader({
+  title,
+  subtitle,
+  accent,
+}: {
+  title: string;
+  subtitle: string;
+  accent: string;
+}) {
   return (
-    <div style={{
-      position: 'relative',
-      display: 'flex', alignItems: 'center', gap: 12,
-      padding: '14px 14px 14px 0',
-      borderRadius: 18,
-      background: 'rgba(255,255,255,0.07)',
-       backdropFilter: 'blur(12px)',
-       border: '1px solid rgba(255,255,255,0.1)',
-       boxShadow: '0 2px 16px rgba(0,0,0,0.3)',
-      overflow: 'hidden',
-      transition: 'transform 200ms ease, box-shadow 200ms ease',
-    }}>
-      {/* 左侧 accent 色条 */}
-      <div style={{
-        position: 'absolute', left: 0, top: 0, bottom: 0, width: 4,
-        background: cfg.accent,
-        borderRadius: '18px 0 0 18px',
-      }} />
-
-      {/* 左侧 accent 背景晕 */}
-      <div style={{
-        position: 'absolute', left: 0, top: 0, bottom: 0, width: '40%',
-        background: `linear-gradient(90deg, ${cfg.accentAlpha}, transparent)`,
-        pointerEvents: 'none',
-      }} />
-
-      {/* 商家图标 */}
-      <div style={{ width: 16, flexShrink: 0 }} /> {/* accent 条间距 */}
-      {shop?.image && (
-        <div style={{
-          width: 56, height: 56, borderRadius: 14, overflow: 'hidden', flexShrink: 0,
-          border: '1px solid rgba(0,0,0,0.06)',
-        }}>
-          <img src={shop.image} alt={shop.name} draggable={false}
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        </div>
-      )}
-
-      {/* 文字区 */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {/* 第一行：商家名 + 胶囊 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 15, fontWeight: 900, color: 'rgba(255,255,255,0.92)' }}>
-            {result.shopName}
-          </span>
-          <span style={{
-            fontSize: 10, fontWeight: 800, letterSpacing: '0.02em',
-            padding: '2px 8px', borderRadius: 999,
-            background: cfg.pill, color: cfg.pillColor,
-          }}>
-            {cfg.label}
-          </span>
-        </div>
-
-        {/* 第二行：菜系 + 维度标签 */}
-        <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontWeight: 600 }}>
-             {shop?.cuisine}
-           </span>
-           {result.matchedDimensions.map((dim) => (
-             <span key={dim} style={{
-               fontSize: 10, fontWeight: 700,
-               padding: '1px 6px', borderRadius: 4,
-               background: 'rgba(255,255,255,0.1)',
-               color: 'rgba(255,255,255,0.55)',
-             }}>
-              {DIM_LABELS_MAP[dim]} ✓
-            </span>
-          ))}
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: 999,
+            background: accent,
+            boxShadow: `0 0 0 7px ${accent}20`,
+            flexShrink: 0,
+          }}
+        />
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: '#fff0d9' }}>{title}</div>
+          <div style={{ fontSize: 12, color: 'rgba(255,231,204,0.62)', marginTop: 2 }}>{subtitle}</div>
         </div>
       </div>
-
-      {/* CTA 按钮 */}
-      {!isBuddy ? (
-        <button type="button" onClick={() => onVisit(result.shopId)} style={{
-          flexShrink: 0, padding: '8px 14px', borderRadius: 999, border: 0,
-          background: cfg.ctaBg, color: cfg.ctaColor,
-          fontSize: 12, fontWeight: 900, cursor: 'pointer',
-          boxShadow: cfg.ctaGlow,
-          transition: 'transform 150ms ease, box-shadow 150ms ease',
-          marginRight: 2,
-        }}>去逛逛</button>
-      ) : (
-        <div style={{
-          flexShrink: 0,
-          color: 'rgba(255,255,255,0.2)', fontSize: 11, fontWeight: 700,
-          textAlign: 'center', lineHeight: 1.4, marginRight: 4,
-        }}>饭搭子<br />带你去</div>
-      )}
     </div>
   );
 }
 
-// ── 主组件 ────────────────────────────────────────────────────────
-interface PersonalityClientProps { code: string; }
+function ShopCard({ result, onVisit }: { result: ShopMatchResult; onVisit: (id: string) => void }) {
+  const shop = XUHUI_SHOPS.find((entry) => entry.id === result.shopId);
+  const cfg = GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.good;
+  const isBuddy = result.grade === 'challenge';
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 28,
+        padding: 22,
+        background: `linear-gradient(135deg, ${cfg.accentSoft}, rgba(255,255,255,0.03) 55%)`,
+        border: CARD_BORDER,
+        boxShadow: '0 14px 36px rgba(0,0,0,0.16)',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: '0 auto 0 0',
+          width: 4,
+          background: cfg.accent,
+        }}
+      />
+      <div
+        className="shop-card-body"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto 1fr auto',
+          gap: 18,
+          alignItems: 'center',
+        }}
+      >
+        <div
+          style={{
+            width: 78,
+            height: 78,
+            borderRadius: 22,
+            background: 'rgba(255,248,235,0.9)',
+            border: '1px solid rgba(255,255,255,0.16)',
+            display: 'grid',
+            placeItems: 'center',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.65)',
+            overflow: 'hidden',
+            flexShrink: 0,
+          }}
+        >
+          {shop?.image ? (
+            <img
+              src={shop.image}
+              alt={shop.name}
+              draggable={false}
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            />
+          ) : (
+            <span style={{ fontSize: 28 }}>{result.grade === 'destiny' ? '👑' : '🍽️'}</span>
+          )}
+        </div>
+
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              marginBottom: 10,
+            }}
+          >
+            <span style={{ fontSize: 24, fontWeight: 900, color: '#fff5e6', lineHeight: 1.1 }}>
+              {result.shopName}
+            </span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                borderRadius: 999,
+                background: cfg.pill,
+                color: cfg.pillColor,
+                fontSize: 12,
+                fontWeight: 900,
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.45)',
+              }}
+            >
+              {result.gradeLabel}
+            </span>
+          </div>
+
+          <div style={{ fontSize: 14, color: 'rgba(255,233,204,0.7)', marginBottom: 12 }}>
+            {shop?.cuisine || '岛上精选店铺'} · {cfg.hint}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {result.matchedDimensions.map((dimension) => (
+              <span
+                key={dimension}
+                style={{
+                  padding: '7px 10px',
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.08)',
+                  color: 'rgba(255,241,221,0.8)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {DIM_LABELS_MAP[dimension]}命中
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {!isBuddy ? (
+          <button
+            type="button"
+            onClick={() => onVisit(result.shopId)}
+            style={{
+              justifySelf: 'end',
+              border: 0,
+              borderRadius: 999,
+              padding: '13px 18px',
+              background: cfg.buttonBg,
+              color: cfg.buttonColor,
+              fontSize: 14,
+              fontWeight: 900,
+              cursor: 'pointer',
+              boxShadow: cfg.buttonShadow,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            去逛逛
+          </button>
+        ) : (
+          <div
+            style={{
+              justifySelf: 'end',
+              padding: '12px 14px',
+              borderRadius: 18,
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              color: 'rgba(255,239,220,0.74)',
+              fontWeight: 700,
+              fontSize: 13,
+              textAlign: 'center',
+              lineHeight: 1.5,
+            }}
+          >
+            饭搭子
+            <br />
+            带你去
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InfoTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone?: CSSProperties['color'];
+}) {
+  return (
+    <div
+      style={{
+        padding: '14px 16px',
+        borderRadius: 18,
+        background: 'rgba(255,255,255,0.05)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <div style={{ fontSize: 12, color: 'rgba(255,231,204,0.54)', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 900, color: tone ?? '#fff0d9' }}>{value}</div>
+    </div>
+  );
+}
+
+interface PersonalityClientProps {
+  code: string;
+}
 
 export function PersonalityClient({ code }: PersonalityClientProps) {
   const router = useRouter();
@@ -342,17 +539,15 @@ export function PersonalityClient({ code }: PersonalityClientProps) {
   const [showAll, setShowAll] = useState(false);
   const [copied, setCopied] = useState(false);
   const [heroVisible, setHeroVisible] = useState(false);
-  const prevCodeRef = useRef(code);
 
   useEffect(() => {
-    prevCodeRef.current = code;
     const result = loadEatiResult();
-    const shopInputs = XUHUI_SHOPS.map((s) => ({ id: s.id, name: s.name, eatiCode: s.eatiCode }));
+    const shopInputs = XUHUI_SHOPS.map((shop) => ({ id: shop.id, name: shop.name, eatiCode: shop.eatiCode }));
     setMatchResults(matchShops(code, shopInputs));
     track('eati_personality_viewed', { code, isSelf: result?.code === code });
-    // 入场动画延迟
-    const t = setTimeout(() => setHeroVisible(true), 100);
-    return () => clearTimeout(t);
+
+    const timer = setTimeout(() => setHeroVisible(true), 80);
+    return () => clearTimeout(timer);
   }, [code]);
 
   const handleVisitShop = (shopId: string) => {
@@ -370,330 +565,598 @@ export function PersonalityClient({ code }: PersonalityClientProps) {
   const handleShare = async () => {
     playTap();
     const url = `${window.location.origin}/xuhui-island/personality/${code}`;
+
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2200);
       track('eati_share_copied', { code });
-    } catch { /* noop */ }
+    } catch {
+      // noop
+    }
   };
 
-  const destinyShops = matchResults.filter((r) => r.grade === 'destiny');
-  const greatShops = matchResults.filter((r) => r.grade === 'great');
-  const otherShops = matchResults.filter((r) => r.grade !== 'destiny' && r.grade !== 'great');
+  const destinyShops = matchResults.filter((result) => result.grade === 'destiny');
+  const greatShops = matchResults.filter((result) => result.grade === 'great');
+  const otherShops = matchResults.filter((result) => result.grade !== 'destiny' && result.grade !== 'great');
+  const dimensionCards = getDimensionCards(code);
 
   return (
-    <div style={{
-      minHeight: '100dvh',
-      background: 'linear-gradient(180deg, #1a1008 0%, #1e1204 50%, #1a0e14 100%)',
-      color: '#f0e8d8',
-      padding: '0 0 100px',
-      overflowX: 'hidden',
-    }}>
-      {/* ── 全局动画 CSS ── */}
-      <style>{`
+    <div
+      style={{
+        minHeight: '100dvh',
+        background: SHELL_BG,
+        color: '#fff6ea',
+        paddingBottom: 132,
+        overflowX: 'hidden',
+      }}
+    >
+      <style dangerouslySetInnerHTML={{ __html: `
         @keyframes eati-float {
-          0%, 100% { transform: translateY(0px) rotate(-1deg); }
-          50% { transform: translateY(-8px) rotate(1deg); }
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-10px); }
         }
-        @keyframes eati-emoji-bounce {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.12); }
+
+        @keyframes eati-shimmer {
+          0% { transform: translateX(-120%) skewX(-18deg); }
+          100% { transform: translateX(220%) skewX(-18deg); }
         }
-        @keyframes eati-lightning-border {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
-        }
-        @keyframes eati-glow-pulse {
-          0%, 100% { box-shadow: 0 0 24px rgba(255,200,40,0.35), 0 8px 24px rgba(255,150,0,0.2); }
-          50% { box-shadow: 0 0 40px rgba(255,200,40,0.6), 0 12px 36px rgba(255,150,0,0.35); }
-        }
-        @keyframes eati-shine {
-          0% { transform: translateX(-100%) skewX(-15deg); }
-          100% { transform: translateX(300%) skewX(-15deg); }
-        }
-        /* ── 宽屏两列布局 ── */
-        .personality-layout {
-          max-width: 1080px;
-          margin: 0 auto;
-        }
-        .personality-inner {
-          display: block;
-        }
-        .personality-hero {
+
+        .personality-shell {
           position: relative;
-          padding: 52px 24px 36px;
-          text-align: center;
+          max-width: 1280px;
+          margin: 0 auto;
+          padding: 28px 18px 0;
+        }
+
+        .personality-layout {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+
+        .hero-panel {
+          position: relative;
           overflow: hidden;
+          border-radius: 34px;
+          background: ${PANEL_BG};
+          border: ${PANEL_BORDER};
+          box-shadow: ${SOFT_SHADOW};
         }
-        .personality-right {
-          padding: 0 16px 0;
+
+        .content-panel {
+          display: grid;
+          gap: 18px;
         }
-        .personality-section-gap {
-          margin-left: 16px;
-          margin-right: 16px;
+
+        .shop-grid {
+          display: grid;
+          gap: 14px;
         }
-        @media (min-width: 900px) {
-          .personality-inner {
-            display: grid;
-            grid-template-columns: 340px 1fr;
+
+        .info-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .dimension-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        @media (min-width: 980px) {
+          .personality-shell {
+            padding: 34px 28px 0;
+          }
+
+          .personality-layout {
+            grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
+            gap: 24px;
             align-items: start;
           }
-          .personality-hero {
+
+          .hero-panel {
             position: sticky;
-            top: 0;
-            max-height: 100dvh;
-            overflow-y: auto;
-            scrollbar-width: none;
-            padding: 52px 16px 36px;
+            top: 22px;
           }
-          .personality-hero::-webkit-scrollbar { display: none; }
-          .personality-right {
-            padding: 28px 32px 120px 20px;
-          }
-          .personality-section-gap {
-            margin-left: 0;
-            margin-right: 0;
+
+          .shop-grid {
+            gap: 16px;
           }
         }
-      `}</style>
 
-      {/* 顶部彩虹条 — 全宽 fixed */}
-      <div style={{
-        position: 'fixed', top: 0, left: 0, right: 0, height: 4, zIndex: 100,
-        background: 'linear-gradient(90deg, #ff5252, #ff9800, #ffd36e, #26de81, #4ecdc4, #a55eea)',
-      }} />
+        @media (max-width: 760px) {
+          .info-grid,
+          .dimension-grid {
+            grid-template-columns: 1fr;
+          }
 
-      <div className="personality-layout">
-      <div className="personality-inner">
+          .shop-card-body,
+          .retake-card,
+          .bottom-actions {
+            grid-template-columns: 1fr !important;
+          }
 
-      {/* ── 左列：Hero 区域 ── */}
-      <div className="personality-hero" style={{
-        opacity: heroVisible ? 1 : 0,
-        transform: heroVisible ? 'translateY(0)' : 'translateY(20px)',
-        transition: 'all 600ms cubic-bezier(.22,1,.36,1)',
-      }}>
-        {/* 背景彩色光斑 */}
-        <div style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: 'radial-gradient(ellipse at 50% 0%, rgba(255,152,0,0.15) 0%, transparent 55%), radial-gradient(ellipse at 20% 100%, rgba(165,94,234,0.1) 0%, transparent 45%)',
-        }} />
+          .shop-card-body > :last-child,
+          .retake-card > :last-child {
+            justify-self: start !important;
+          }
+        }
 
-        {/* 返回 */}
-        <button type="button" onClick={handleGoIsland} style={{
-          position: 'absolute', top: 16, left: 16,
-          padding: '8px 14px', borderRadius: 999,
-          border: '1px solid rgba(255,255,255,0.12)',
-          background: 'rgba(255,255,255,0.08)',
-          color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 900, cursor: 'pointer',
-          backdropFilter: 'blur(8px)',
-        }}>← 回到岛上</button>
+        @media (max-width: 900px) {
+          .shop-card-grid-fallback {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      ` }} />
 
-        {/* EATI 编码标签 */}
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '5px 16px', borderRadius: 999, marginBottom: 16,
-          background: 'rgba(255,152,0,0.15)', border: '1px solid rgba(255,152,0,0.4)',
-          fontSize: 12, fontWeight: 900, letterSpacing: '0.22em', color: '#ffb347',
-        }}>
-          🦞 EATI · {code}
-        </div>
+      <div
+        style={{
+          position: 'fixed',
+          inset: '0 auto auto 0',
+          width: '100%',
+          height: 5,
+          zIndex: 30,
+          background: 'linear-gradient(90deg, #ff8b66 0%, #f7bd53 25%, #3bdab1 60%, #86b7ff 80%, #bf7cff 100%)',
+          boxShadow: '0 0 22px rgba(255,183,76,0.35)',
+        }}
+      />
 
-        {/* Emoji 大图 */}
-        <div style={{
-          fontSize: 'clamp(60px, 12vw, 92px)', lineHeight: 1,
-          animation: 'eati-emoji-bounce 2.5s ease-in-out infinite',
-        }}>
-          {personality.emoji}
-        </div>
-
-        {/* 人格名字（掉落动画） */}
-        <div style={{
-          marginTop: 14,
-          fontSize: 'clamp(28px, 6vw, 48px)',
-          fontWeight: 900,
-          lineHeight: 1.1,
-          background: 'linear-gradient(135deg, #ff7b6b, #ffb347)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-        }}>
-          <FallingTitle text={personality.name} />
-        </div>
-
-        {/* 标语 */}
-        <div style={{
-          marginTop: 10,
-          fontSize: 'clamp(14px, 2.5vw, 18px)',
-          fontWeight: 800, color: 'rgba(255,255,255,0.45)', lineHeight: 1.5,
-          opacity: heroVisible ? 1 : 0,
-          transition: 'opacity 400ms ease 800ms',
-        }}>
-          {personality.tagline}
-        </div>
-
-        {/* 雷达图 */}
-        <div style={{ marginTop: 28 }}>
-          <RadarChart code={code} />
-        </div>
-      </div>
-
-      {/* ── 右列：内容区 ── */}
-      <div className="personality-right">
-
-      {/* ── 旺财判决词 ── */}
-      <div style={{
-        margin: '0 0 24px',
-        padding: '20px 20px',
-        borderRadius: 26,
-        background: 'linear-gradient(135deg, rgba(255,180,40,0.12), rgba(255,120,0,0.08))',
-        border: '1px solid rgba(255,180,40,0.3)',
-        boxShadow: 'none',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <div style={{
-            width: 10, height: 10, borderRadius: '50%',
-            background: 'linear-gradient(135deg, #ffd36e, #ff9800)',
-            boxShadow: '0 2px 8px rgba(255,180,40,0.5)',
-          }} />
-          <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.22em', color: 'rgba(255,180,80,0.85)' }}>
-            🦞 旺财的判决
-          </span>
-        </div>
-        <div style={{
-          fontSize: 15, lineHeight: 1.8, fontWeight: 800, color: 'rgba(255,230,180,0.9)',
-          letterSpacing: '0.01em',
-        }}>
-          {personality.wangcaiVerdict}
-        </div>
-      </div>
-
-      {/* ── 天命之选 ── */}
-      {destinyShops.length > 0 && (
-        <div style={{ margin: '0 0 20px' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
-          }}>
-            <div style={{ width: 3, height: 16, borderRadius: 99, background: '#F5A623', flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: 'rgba(255,255,255,0.9)', letterSpacing: '0.01em' }}>
-               👑 天命之选
-             </span>
-             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontWeight: 600 }}>为你而生</span>
-          </div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {destinyShops.map((r) => (
-              <ShopCard key={r.shopId} result={r} onVisit={handleVisitShop} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── 高度契合 ── */}
-      {greatShops.length > 0 && (
-        <div style={{ margin: '0 0 20px' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
-          }}>
-            <div style={{ width: 3, height: 16, borderRadius: 99, background: '#2ECC9A', flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: 'rgba(255,255,255,0.9)', letterSpacing: '0.01em' }}>
-               🔥 高度契合
-             </span>
-             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontWeight: 600 }}>大概率会爱上</span>
-          </div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {greatShops.map((r) => (
-              <ShopCard key={r.shopId} result={r} onVisit={handleVisitShop} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── 其他（折叠） ── */}
-      {otherShops.length > 0 && (
-        <div style={{ margin: '0 0 20px' }}>
-          <button type="button"
-            onClick={() => { playTap(); setShowAll((v) => !v); }}
+      <div className="personality-shell">
+        <div className="personality-layout">
+          <aside
+            className="hero-panel"
             style={{
-              width: '100%', padding: '13px 16px', borderRadius: 16,
-               border: '1px solid rgba(255,255,255,0.1)',
-               background: 'rgba(255,255,255,0.06)',
-               backdropFilter: 'blur(8px)',
-               color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: 700, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            }}>
-            <span>更多商家（含反差体验 & 饭搭子带你去）</span>
-             <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.25)' }}>{showAll ? '↑' : '↓'}</span>
-          </button>
-          {showAll && (
-            <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-              {otherShops.map((r) => (
-                <ShopCard key={r.shopId} result={r} onVisit={handleVisitShop} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+              opacity: heroVisible ? 1 : 0,
+              transform: heroVisible ? 'translateY(0)' : 'translateY(18px)',
+              transition: 'all 650ms cubic-bezier(.2, .9, .2, 1)',
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background:
+                  'radial-gradient(circle at 20% 18%, rgba(248,189,83,0.18), transparent 28%), radial-gradient(circle at 80% 12%, rgba(59,218,177,0.12), transparent 25%), radial-gradient(circle at 50% 100%, rgba(191,124,255,0.14), transparent 36%)',
+                pointerEvents: 'none',
+              }}
+            />
 
-      {/* ── 重测入口 ── */}
-      <div style={{ margin: '4px 0 0' }}>
-        <button type="button"
-          onClick={() => { playTap(); track('eati_retake', { code }); router.push('/xuhui-island?eati=quiz'); }}
-          style={{
-            width: '100%', padding: '16px 18px', borderRadius: 20,
-            border: '1px dashed rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)',
-            fontSize: 14, fontWeight: 900, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 14,
-          }}>
-          <span style={{ fontSize: 22, animation: 'eati-float 3s ease-in-out infinite' }}>🔄</span>
-          <span style={{ flex: 1, textAlign: 'left' }}>
-            <span style={{ display: 'block', fontSize: 14, fontWeight: 900, color: 'rgba(255,255,255,0.55)' }}>
-              觉得结果不准？重新测一次
-            </span>
-            <span style={{ display: 'block', fontSize: 11, color: 'rgba(255,255,255,0.25)', marginTop: 3 }}>
-              12 题 · 2 分钟 · 结果会覆盖当前人格
-            </span>
-          </span>
-          <span style={{ fontSize: 16, color: 'rgba(255,255,255,0.2)' }}>→</span>
-        </button>
+            <div style={{ padding: '22px 22px 24px', position: 'relative' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  alignItems: 'center',
+                  marginBottom: 18,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={handleGoIsland}
+                  style={{
+                    borderRadius: 999,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'rgba(255,240,220,0.82)',
+                    padding: '10px 14px',
+                    fontSize: 13,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    backdropFilter: 'blur(12px)',
+                  }}
+                >
+                  ← 回到岛上
+                </button>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 14px',
+                    borderRadius: 999,
+                    background: 'rgba(248,189,83,0.12)',
+                    border: '1px solid rgba(248,189,83,0.28)',
+                    color: '#ffd695',
+                    fontSize: 12,
+                    fontWeight: 900,
+                    letterSpacing: '0.18em',
+                  }}
+                >
+                  🦞 EATI · {code}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: '24px 22px 20px',
+                  borderRadius: 30,
+                  background: CARD_BG,
+                  border: '1px solid rgba(255,255,255,0.09)',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06)',
+                }}
+              >
+                <div
+                  style={{
+                    width: 108,
+                    height: 108,
+                    borderRadius: 30,
+                    display: 'grid',
+                    placeItems: 'center',
+                    marginBottom: 18,
+                    background:
+                      'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.26), rgba(255,255,255,0.06) 58%, rgba(255,255,255,0.02) 100%)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    boxShadow: '0 16px 36px rgba(0,0,0,0.18)',
+                    fontSize: 62,
+                    animation: 'eati-float 4s ease-in-out infinite',
+                  }}
+                >
+                  {personality.emoji}
+                </div>
+
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 12px',
+                    borderRadius: 999,
+                    background: 'rgba(59,218,177,0.12)',
+                    border: '1px solid rgba(59,218,177,0.22)',
+                    color: '#9ef2da',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    marginBottom: 14,
+                  }}
+                >
+                  代号 {personality.shortName}
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 'clamp(34px, 5vw, 50px)',
+                    fontWeight: 900,
+                    lineHeight: 1.04,
+                    color: '#fff3df',
+                    marginBottom: 12,
+                    letterSpacing: '-0.04em',
+                  }}
+                >
+                  <FallingTitle text={personality.name} />
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 17,
+                    lineHeight: 1.7,
+                    color: 'rgba(255,233,204,0.76)',
+                    marginBottom: 20,
+                    maxWidth: 420,
+                  }}
+                >
+                  {personality.tagline}
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <RadarChart code={code} />
+                </div>
+
+                <div className="dimension-grid">
+                  {dimensionCards.map((item) => (
+                    <div
+                      key={item.key}
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: 18,
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: item.color, fontWeight: 800, marginBottom: 6 }}>
+                        {item.key} · {item.title}
+                      </div>
+                      <div style={{ fontSize: 15, color: '#fff3df', fontWeight: 800 }}>{item.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <main className="content-panel">
+            <section
+              style={{
+                position: 'relative',
+                overflow: 'hidden',
+                borderRadius: 34,
+                padding: 24,
+                background: PANEL_BG,
+                border: PANEL_BORDER,
+                boxShadow: SOFT_SHADOW,
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 'auto -10% -36% auto',
+                  width: 260,
+                  height: 260,
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle, rgba(248,189,83,0.18), transparent 65%)',
+                  pointerEvents: 'none',
+                }}
+              />
+
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '8px 14px',
+                  borderRadius: 999,
+                  marginBottom: 16,
+                  background: 'rgba(248,189,83,0.1)',
+                  border: '1px solid rgba(248,189,83,0.24)',
+                  color: '#ffdb9a',
+                  fontSize: 12,
+                  fontWeight: 900,
+                  letterSpacing: '0.16em',
+                }}
+              >
+                旺财的判决
+              </div>
+
+              <div
+                style={{
+                  fontSize: 'clamp(18px, 2vw, 28px)',
+                  lineHeight: 1.75,
+                  fontWeight: 800,
+                  color: '#fff1d8',
+                  maxWidth: 920,
+                  position: 'relative',
+                  zIndex: 1,
+                }}
+              >
+                {personality.wangcaiVerdict}
+              </div>
+
+              <div className="info-grid" style={{ marginTop: 20 }}>
+                <InfoTile label="人格编号" value={code} tone="#ffd695" />
+                <InfoTile
+                  label="优先推荐"
+                  value={destinyShops.length > 0 ? `${destinyShops.length} 家天命之选` : `${greatShops.length} 家高度契合`}
+                  tone={destinyShops.length > 0 ? '#f8bd53' : '#65e4be'}
+                />
+                <InfoTile label="你的风格" value={personality.shortName} />
+                <InfoTile label="可逛店铺" value={matchResults.length} />
+              </div>
+            </section>
+
+            {destinyShops.length > 0 && (
+              <section
+                style={{
+                  borderRadius: 32,
+                  padding: 22,
+                  background: PANEL_BG,
+                  border: PANEL_BORDER,
+                  boxShadow: SOFT_SHADOW,
+                }}
+              >
+                <SectionHeader
+                  title="天命之选"
+                  subtitle="最应该先去的那几家"
+                  accent={GRADE_CONFIG.destiny.accent}
+                />
+                <div className="shop-grid">
+                  {destinyShops.map((result) => (
+                    <ShopCard key={result.shopId} result={result} onVisit={handleVisitShop} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {greatShops.length > 0 && (
+              <section
+                style={{
+                  borderRadius: 32,
+                  padding: 22,
+                  background: PANEL_BG,
+                  border: PANEL_BORDER,
+                  boxShadow: SOFT_SHADOW,
+                }}
+              >
+                <SectionHeader
+                  title="高度契合"
+                  subtitle="不一定一眼心动，但吃完会记住"
+                  accent={GRADE_CONFIG.great.accent}
+                />
+                <div className="shop-grid">
+                  {greatShops.map((result) => (
+                    <ShopCard key={result.shopId} result={result} onVisit={handleVisitShop} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {otherShops.length > 0 && (
+              <section
+                style={{
+                  borderRadius: 32,
+                  padding: 22,
+                  background: PANEL_BG,
+                  border: PANEL_BORDER,
+                  boxShadow: SOFT_SHADOW,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    playTap();
+                    setShowAll((value) => !value);
+                  }}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 16,
+                    borderRadius: 24,
+                    padding: '18px 20px',
+                    border: '1px solid rgba(255,255,255,0.09)',
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))',
+                    color: '#fff0d8',
+                    fontSize: 16,
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span>更多商家：反差体验 / 值得一试 / 饭搭子路线</span>
+                  <span style={{ fontSize: 22, color: 'rgba(255,241,220,0.68)' }}>{showAll ? '−' : '+'}</span>
+                </button>
+
+                {showAll && (
+                  <div className="shop-grid" style={{ marginTop: 16 }}>
+                    {otherShops.map((result) => (
+                      <ShopCard key={result.shopId} result={result} onVisit={handleVisitShop} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            <section
+              style={{
+                borderRadius: 32,
+                padding: 22,
+                background: PANEL_BG,
+                border: PANEL_BORDER,
+                boxShadow: SOFT_SHADOW,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  playTap();
+                  track('eati_retake', { code });
+                  router.push('/xuhui-island?eati=quiz');
+                }}
+                className="retake-card"
+                style={{
+                  width: '100%',
+                  display: 'grid',
+                  gridTemplateColumns: 'auto 1fr auto',
+                  gap: 16,
+                  alignItems: 'center',
+                  border: 0,
+                  borderRadius: 26,
+                  padding: '22px 20px',
+                  background:
+                    'linear-gradient(135deg, rgba(98,168,255,0.12), rgba(255,255,255,0.05) 38%, rgba(194,135,255,0.1) 100%)',
+                  color: '#fff2de',
+                  cursor: 'pointer',
+                }}
+              >
+                <div
+                  style={{
+                    width: 58,
+                    height: 58,
+                    borderRadius: 18,
+                    display: 'grid',
+                    placeItems: 'center',
+                    background: 'rgba(255,255,255,0.09)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    fontSize: 24,
+                  }}
+                >
+                  🔄
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 6 }}>觉得结果不准？重新测一次</div>
+                  <div style={{ fontSize: 14, color: 'rgba(255,231,204,0.66)', lineHeight: 1.6 }}>
+                    12 道题，约 2 分钟。新的结果会直接覆盖当前人格。
+                  </div>
+                </div>
+                <div style={{ fontSize: 24, color: 'rgba(255,241,220,0.74)' }}>→</div>
+              </button>
+            </section>
+          </main>
+        </div>
       </div>
 
-      </div>{/* end personality-right */}
-      </div>{/* end personality-inner */}
-      </div>{/* end personality-layout */}
+      <div
+        style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          padding: '14px 16px 22px',
+          background: 'linear-gradient(180deg, rgba(18,11,16,0), rgba(18,11,16,0.94) 50%)',
+          zIndex: 20,
+        }}
+      >
+        <div
+          className="bottom-actions"
+          style={{
+            maxWidth: 1280,
+            margin: '0 auto',
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) auto',
+            gap: 12,
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleGoIsland}
+            style={{
+              position: 'relative',
+              overflow: 'hidden',
+              border: 0,
+              borderRadius: 999,
+              padding: '18px 24px',
+              background: 'linear-gradient(135deg, #ffe17d, #ffad2e 48%, #ff9135)',
+              color: '#3e2205',
+              fontSize: 18,
+              fontWeight: 900,
+              letterSpacing: '0.02em',
+              cursor: 'pointer',
+              boxShadow: '0 18px 40px rgba(255,173,46,0.32)',
+            }}
+          >
+            <span
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.44), transparent)',
+                animation: 'eati-shimmer 3.4s linear infinite',
+              }}
+            />
+            <span style={{ position: 'relative' }}>去岛上找天命之选</span>
+          </button>
 
-      {/* ── 固定底部 CTA ── */}
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        padding: '12px 16px 24px',
-        background: 'linear-gradient(0deg, rgba(26,16,8,1) 0%, rgba(26,16,8,0) 100%)',
-        display: 'flex', gap: 10,
-      }}>
-        <button type="button" onClick={handleGoIsland} style={{
-          flex: 1, padding: '15px 16px', borderRadius: 999, border: 0,
-          background: 'linear-gradient(135deg, #FFD700, #FF9500)',
-          color: '#5c3000', fontSize: 14, fontWeight: 900, cursor: 'pointer',
-          boxShadow: '0 8px 24px rgba(255,180,40,0.45)',
-          letterSpacing: '0.02em',
-          position: 'relative', overflow: 'hidden',
-        }}>
-          {/* 光泽扫过效果 */}
-          <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)',
-            animation: 'eati-shine 3s ease-in-out infinite',
-          }} />
-          <span style={{ position: 'relative' }}>去岛上找天命之选 🔥</span>
-        </button>
-        <button type="button" onClick={handleShare} style={{
-          flex: '0 0 auto', padding: '15px 18px', borderRadius: 999,
-          border: '1px solid rgba(255,255,255,0.15)',
-          background: copied ? 'rgba(46,204,154,0.15)' : 'rgba(255,255,255,0.08)',
-          color: copied ? '#2ECC9A' : 'rgba(255,255,255,0.7)',
-          fontSize: 13, fontWeight: 900, cursor: 'pointer',
-          whiteSpace: 'nowrap', transition: 'all 200ms ease',
-          backdropFilter: 'blur(8px)',
-        }}>
-          {copied ? '已复制 ✓' : '分享给饭搭子 📤'}
-        </button>
+          <button
+            type="button"
+            onClick={handleShare}
+            style={{
+              borderRadius: 999,
+              border: '1px solid rgba(255,255,255,0.14)',
+              background: copied ? 'rgba(59,218,177,0.16)' : 'rgba(255,255,255,0.08)',
+              color: copied ? '#9ef2da' : '#fff0d9',
+              padding: '18px 20px',
+              fontSize: 14,
+              fontWeight: 900,
+              cursor: 'pointer',
+              backdropFilter: 'blur(16px)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {copied ? '链接已复制' : '分享给饭搭子'}
+          </button>
+        </div>
       </div>
     </div>
   );

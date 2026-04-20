@@ -35,6 +35,7 @@ export interface EatiQuizResult {
   code: EatiCode;           // 4-bit 编码，如 'HHLH'
   skippedCount: number;     // 跳过题数
   answeredAt: number;       // 时间戳
+  version: string;          // 题库版本，用于题目更新后失效旧结果
 }
 
 /** 单道测评题 */
@@ -514,6 +515,7 @@ export function parseCode(code: EatiCode): { A: EatiBit; B: EatiBit; C: EatiBit;
 // ── localStorage 键名 ─────────────────────────────────────────────
 
 export const EATI_STORAGE_KEY = 'eati_result_v1';
+export const EATI_QUIZ_VERSION = '2026-04-20';
 
 export function saveEatiResult(result: EatiQuizResult): void {
   if (typeof window === 'undefined') return;
@@ -525,7 +527,9 @@ export function loadEatiResult(): EatiQuizResult | null {
   try {
     const raw = localStorage.getItem(EATI_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as EatiQuizResult;
+    const parsed = JSON.parse(raw) as Partial<EatiQuizResult>;
+    if (!parsed?.code || parsed.version !== EATI_QUIZ_VERSION) return null;
+    return parsed as EatiQuizResult;
   } catch {
     return null;
   }
